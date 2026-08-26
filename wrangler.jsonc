@@ -8,6 +8,6 @@
   "durable_objects": {
     "bindings": [{ "class_name": "HostifyMCP", "name": "MCP_OBJECT" }]
   },
-  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "REPLACE_WITH_KV_ID" }],
+  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "112cbff650414567a18ca30408819245" }],
   "observability": { "enabled": true }
 }
