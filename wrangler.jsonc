@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "hostify-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-26",
+  "compatibility_flags": ["nodejs_compat"],
+  "migrations": [{ "new_sqlite_classes": ["HostifyMCP"], "tag": "v1" }],
+  "durable_objects": {
+    "bindings": [{ "class_name": "HostifyMCP", "name": "MCP_OBJECT" }]
+  },
+  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "REPLACE_WITH_KV_ID" }],
+  "observability": { "enabled": true }
+}
