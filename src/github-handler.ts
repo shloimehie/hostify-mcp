@@ -171,6 +171,9 @@ app.get("/callback", async (c) => {
 	// Fetch the user info from GitHub
 	const user = await new Octokit({ auth: accessToken }).rest.users.getAuthenticated();
 	const { login, name, email } = user.data;
+	if (login !== "shloimehie") {
+  return c.text("Access denied", 403);
+}
 
 	// Return back to the MCP client a new token
 	const { redirectTo } = await c.env.OAUTH_PROVIDER.completeAuthorization({
