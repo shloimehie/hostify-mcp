@@ -476,4 +476,3 @@ export default new OAuthProvider({
   defaultHandler: GitHubHandler as any,
   tokenEndpoint: "/token",
 });
-
