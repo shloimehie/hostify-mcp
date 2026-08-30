@@ -8,6 +8,15 @@
   "durable_objects": {
     "bindings": [{ "class_name": "HostifyMCP", "name": "MCP_OBJECT" }]
   },
-  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "112cbff650414567a18ca30408819245" }],
+  "kv_namespaces": [
+    { "binding": "OAUTH_KV", "id": "112cbff650414567a18ca30408819245" }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "hostify-data",
+      "database_id": "a6391176-d4ac-4523-b407-fe8b07ebf85c"
+    }
+  ],
   "observability": { "enabled": true }
 }
