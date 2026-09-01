@@ -102,7 +102,7 @@ function nightsBetween(checkIn: string | null, checkOut: string | null): number 
   return Number.isFinite(nights) ? nights : null;
 }
 
-export class HostifyMCP extends McpAgent<Env, Record<string, never>, Props> {
+export class HostifyMCPV2 extends McpAgent<Env, Record<string, never>, Props> {
   server = new McpServer(
     { name: "Home to Host – Hostify Fast", version: "2.0.0" },
     {
@@ -127,15 +127,26 @@ export class HostifyMCP extends McpAgent<Env, Record<string, never>, Props> {
     return body;
   }
 
-  private async paged(path: string, params: Row, keys: string[], maxPages: number): Promise<Row[]> {
+  private async paged(
+    path: string,
+    params: Row,
+    keys: string[],
+    maxPages: number,
+    startPage = 1,
+    pageSize = 20,
+  ): Promise<{ items: Row[]; nextPage: number; hasMore: boolean }> {
     const all: Row[] = [];
-    for (let page = 1; page <= maxPages; page += 1) {
-      const body = await this.hostify(path, { ...params, page, per_page: 50 });
+    let nextPage = startPage;
+    let hasMore = false;
+    for (let page = startPage; page < startPage + maxPages; page += 1) {
+      const body = await this.hostify(path, { ...params, page, per_page: pageSize });
       const items = extractItems(body, keys);
       all.push(...items);
-      if (items.length < 50) break;
+      nextPage = page + 1;
+      hasMore = items.length === pageSize;
+      if (!hasMore) break;
     }
-    return all;
+    return { items: all, nextPage, hasMore };
   }
 
   private async batch(statements: D1PreparedStatement[]) {
@@ -156,8 +167,9 @@ export class HostifyMCP extends McpAgent<Env, Record<string, never>, Props> {
     ).bind(type, completed, count, status, error).run();
   }
 
-  private async syncListings(): Promise<number> {
-    const items = await this.paged("/listings", { include_related_objects: 0 }, ["listings", "items"], 20);
+  private async syncListings(): Promise<{ count: number; nextPage: number; hasMore: boolean }> {
+    const page = await this.paged("/listings", { include_related_objects: 0 }, ["listings", "items"], 20, 1, 50);
+    const items = page.items;
     const statements = items.map((item) => {
       const address = objectValue(item, "address", "location");
       return this.env.DB.prepare(
@@ -180,16 +192,18 @@ export class HostifyMCP extends McpAgent<Env, Record<string, never>, Props> {
       );
     }).filter((_, index) => Boolean(textValue(items[index], "id", "listing_id", "listingId")));
     await this.batch(statements);
-    return statements.length;
+    return { count: statements.length, nextPage: page.nextPage, hasMore: page.hasMore };
   }
 
-  private async syncReservations(from: string, to: string): Promise<number> {
-    const items = await this.paged(
+  private async syncReservations(from: string, to: string, startPage: number, pages: number): Promise<{ count: number; nextPage: number; hasMore: boolean }> {
+    const page = await this.paged(
       "/reservations",
       { start_date: from, end_date: to, sort: "checkIn", fees: 1 },
       ["reservations", "items"],
-      100,
+      pages,
+      startPage,
     );
+    const items = page.items;
     const statements = items.map((item) => {
       const listing = objectValue(item, "listing", "property");
       const guest = objectValue(item, "guest", "customer");
@@ -220,11 +234,12 @@ export class HostifyMCP extends McpAgent<Env, Record<string, never>, Props> {
       ) };
     }).filter((entry) => Boolean(entry.id));
     await this.batch(statements.map((entry) => entry.statement));
-    return statements.length;
+    return { count: statements.length, nextPage: page.nextPage, hasMore: page.hasMore };
   }
 
-  private async syncReviews(from: string, to: string): Promise<number> {
-    const items = await this.paged("/reviews", { created_from: from, created_to: to }, ["reviews", "items"], 100);
+  private async syncReviews(from: string, to: string, startPage: number, pages: number): Promise<{ count: number; nextPage: number; hasMore: boolean }> {
+    const page = await this.paged("/reviews", { created_from: from, created_to: to }, ["reviews", "items"], pages, startPage);
+    const items = page.items;
     const statements = items.map((item) => {
       const listing = objectValue(item, "listing", "property");
       const guest = objectValue(item, "guest", "reviewer");
@@ -251,11 +266,12 @@ export class HostifyMCP extends McpAgent<Env, Record<string, never>, Props> {
       ) };
     }).filter((entry) => Boolean(entry.id));
     await this.batch(statements.map((entry) => entry.statement));
-    return statements.length;
+    return { count: statements.length, nextPage: page.nextPage, hasMore: page.hasMore };
   }
 
-  private async syncTransactions(): Promise<number> {
-    const items = await this.paged("/transactions", {}, ["transactions", "items"], 100);
+  private async syncTransactions(startPage: number, pages: number): Promise<{ count: number; nextPage: number; hasMore: boolean }> {
+    const page = await this.paged("/transactions", {}, ["transactions", "items"], pages, startPage);
+    const items = page.items;
     const statements = items.map((item) => {
       const listing = objectValue(item, "listing", "property");
       const id = textValue(item, "id", "transaction_id", "transactionId");
@@ -281,36 +297,46 @@ export class HostifyMCP extends McpAgent<Env, Record<string, never>, Props> {
       ) };
     }).filter((entry) => Boolean(entry.id));
     await this.batch(statements.map((entry) => entry.statement));
-    return statements.length;
+    return { count: statements.length, nextPage: page.nextPage, hasMore: page.hasMore };
   }
 
   async init() {
     this.server.tool(
-      "refresh_hostify_cache",
-      "Refresh the fast Hostify cache. Use after setup or when fresh bookings, reviews or financial data are needed.",
+      "refresh_hostify_cache_chunk",
+      "Refresh one small Cloudflare-safe chunk of the Hostify cache (maximum 20 records). If has_more is true, call this same action again using the returned next_page.",
       {
-        data_types: z.array(z.enum(["listings", "reservations", "reviews", "transactions"])).default(["listings", "reservations", "reviews"]),
+        data_type: z.enum(["listings", "reservations", "reviews", "transactions"]),
         from_date: date.default(isoDate(-730)),
         to_date: date.default(isoDate(730)),
+        start_page: z.number().int().positive().default(1),
       },
-      async ({ data_types, from_date, to_date }) => {
-        const summary: Row = {};
-        for (const type of data_types) {
-          await this.syncStatus(type, "running");
-          try {
-            const count = type === "listings" ? await this.syncListings()
-              : type === "reservations" ? await this.syncReservations(from_date, to_date)
-              : type === "reviews" ? await this.syncReviews(from_date, to_date)
-              : await this.syncTransactions();
-            await this.syncStatus(type, "complete", count);
-            summary[type] = { status: "complete", records: count };
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            await this.syncStatus(type, "error", 0, message);
-            summary[type] = { status: "error", error: message };
-          }
+      async ({ data_type, from_date, to_date, start_page }) => {
+        await this.syncStatus(data_type, "running");
+        try {
+          const synced = data_type === "listings" ? await this.syncListings()
+            : data_type === "reservations" ? await this.syncReservations(from_date, to_date, start_page, 1)
+            : data_type === "reviews" ? await this.syncReviews(from_date, to_date, start_page, 1)
+            : await this.syncTransactions(start_page, 1);
+          const status = synced.hasMore ? "partial" : "complete";
+          await this.syncStatus(data_type, status, synced.count);
+          return result({
+            data_type,
+            status,
+            records_in_this_chunk: synced.count,
+            start_page,
+            next_page: synced.nextPage,
+            has_more: synced.hasMore,
+            from_date,
+            to_date,
+            instruction: synced.hasMore
+              ? `Call refresh_hostify_cache_chunk again with start_page=${synced.nextPage}`
+              : "This data range is complete.",
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          await this.syncStatus(data_type, "error", 0, message);
+          return result({ data_type, status: "error", error: message, start_page });
         }
-        return result({ refreshed: summary, from_date, to_date });
       },
     );
 
@@ -468,8 +494,11 @@ export class HostifyMCP extends McpAgent<Env, Record<string, never>, Props> {
   }
 }
 
+// Keep the original class export during the two-file migration.
+export class HostifyMCP extends HostifyMCPV2 {}
+
 export default new OAuthProvider({
-  apiHandler: HostifyMCP.serve("/mcp"),
+  apiHandler: HostifyMCPV2.serve("/mcp"),
   apiRoute: "/mcp",
   authorizeEndpoint: "/authorize",
   clientRegistrationEndpoint: "/register",
