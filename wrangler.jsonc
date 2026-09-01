@@ -4,9 +4,12 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-08-26",
   "compatibility_flags": ["nodejs_compat"],
-  "migrations": [{ "new_sqlite_classes": ["HostifyMCP"], "tag": "v1" }],
+  "migrations": [
+    { "new_sqlite_classes": ["HostifyMCP"], "tag": "v1" },
+    { "new_sqlite_classes": ["HostifyMCPV2"], "tag": "v2" }
+  ],
   "durable_objects": {
-    "bindings": [{ "class_name": "HostifyMCP", "name": "MCP_OBJECT" }]
+    "bindings": [{ "class_name": "HostifyMCPV2", "name": "MCP_OBJECT" }]
   },
   "kv_namespaces": [
     { "binding": "OAUTH_KV", "id": "112cbff650414567a18ca30408819245" }
