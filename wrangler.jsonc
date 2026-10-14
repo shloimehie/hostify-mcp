@@ -21,5 +21,7 @@
       "database_id": "a6391176-d4ac-4523-b407-fe8b07ebf85c"
     }
   ],
+  "triggers": { "crons": ["*/2 * * * *"] },
+  "vars": { "SYNC_PAGES_PER_RUN": "8" },
   "observability": { "enabled": true }
 }

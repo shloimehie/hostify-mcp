@@ -3,6 +3,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { McpAgent } from "agents/mcp";
 import { z } from "zod";
 import { GitHubHandler } from "./github-handler";
+import {
+  extractItems, hostifyGet, mapListingDetail, mapReservation, mapSearchItem, Row,
+} from "./hostify";
+import {
+  findListings, findReservations, movements, portfolioPerformance, propertyPerformance, reviews,
+} from "./queries";
+import { ensureSchema } from "./schema";
+import { freshness, runSync, syncStatus } from "./sync";
 
 interface Env {
   HOSTIFY_API_KEY: string;
@@ -12,492 +20,253 @@ interface Env {
   OAUTH_KV: KVNamespace;
   MCP_OBJECT: DurableObjectNamespace;
   DB: D1Database;
+  SYNC_PAGES_PER_RUN?: string;
 }
 
 type Props = { login: string; name: string; email: string; accessToken: string };
-type Row = Record<string, unknown>;
 
-const HOSTIFY_BASE_URL = "https://api-rms.hostify.com";
-const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("Date in YYYY-MM-DD format");
-const paging = {
-  page: z.number().int().positive().default(1),
-  per_page: z.number().int().min(1).max(50).default(20),
-};
+const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("YYYY-MM-DD");
+const BOOKING_JOBS = ["reservations_hot", "reservations_full"];
 
-const blockedKeys = new Set([
-  "lock_pin", "lock_link", "lockbox_code", "access_code", "access_codes",
-  "door_code", "pin", "hostify_checkin_form_link", "email", "phone",
-]);
+function result(data: unknown) {
+  return { content: [{ type: "text" as const, text: JSON.stringify(data) }] };
+}
 
-function redact(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(redact);
+function failure(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return { content: [{ type: "text" as const, text: JSON.stringify({ error: message }) }], isError: true };
+}
+
+// For live payloads with no fixed shape (calendar): drop anything that could
+// carry access details or guest contact data.
+const SENSITIVE = /(custom_fields|email|phone|pin|lock|password|wifi|access|door|code|instructions|link|photo|notes|details)/i;
+function scrub(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(scrub);
   if (value && typeof value === "object") {
     return Object.fromEntries(
-      Object.entries(value as Row)
-        .filter(([key]) => !blockedKeys.has(key.toLowerCase()))
-        .map(([key, item]) => [key, redact(item)]),
+      Object.entries(value as Row).filter(([k]) => !SENSITIVE.test(k)).map(([k, v]) => [k, scrub(v)]),
     );
   }
   return value;
 }
 
-function result(data: unknown) {
-  return { content: [{ type: "text" as const, text: JSON.stringify(redact(data)) }] };
-}
-
-function textValue(row: Row, ...keys: string[]): string | null {
-  for (const key of keys) {
-    const value = row[key];
-    if (value !== undefined && value !== null && value !== "") return String(value);
-  }
-  return null;
-}
-
-function numberValue(row: Row, ...keys: string[]): number | null {
-  for (const key of keys) {
-    const value = row[key];
-    if (value !== undefined && value !== null && value !== "") {
-      const number = Number(value);
-      if (Number.isFinite(number)) return number;
-    }
-  }
-  return null;
-}
-
-function objectValue(row: Row, ...keys: string[]): Row {
-  for (const key of keys) {
-    const value = row[key];
-    if (value && typeof value === "object" && !Array.isArray(value)) return value as Row;
-  }
-  return {};
-}
-
-function extractItems(body: unknown, preferredKeys: string[]): Row[] {
-  if (Array.isArray(body)) return body.filter((item) => item && typeof item === "object") as Row[];
-  if (!body || typeof body !== "object") return [];
-  const row = body as Row;
-  for (const key of preferredKeys) {
-    if (Array.isArray(row[key])) return row[key] as Row[];
-  }
-  for (const key of ["data", "result", "results", "response"]) {
-    const nested = row[key];
-    if (Array.isArray(nested)) return nested as Row[];
-    if (nested && typeof nested === "object") {
-      const found = extractItems(nested, preferredKeys);
-      if (found.length) return found;
-    }
-  }
-  return [];
-}
-
-function isoDate(offsetDays = 0): string {
-  const value = new Date();
-  value.setUTCDate(value.getUTCDate() + offsetDays);
-  return value.toISOString().slice(0, 10);
-}
-
-function nightsBetween(checkIn: string | null, checkOut: string | null): number | null {
-  if (!checkIn || !checkOut) return null;
-  const nights = Math.round((Date.parse(checkOut) - Date.parse(checkIn)) / 86400000);
-  return Number.isFinite(nights) ? nights : null;
-}
+const INSTRUCTIONS = [
+  "Home to Host property data from Hostify.",
+  "Answer from the cached tools first — they are instant and pre-computed: find_property, property_performance, portfolio_performance,",
+  "arrivals_departures, find_reservation, property_reviews. The cache refreshes itself every few minutes; each answer carries a data_freshness stamp.",
+  "Use one call per question: property_performance already includes totals, occupancy, ADR and the booking list.",
+  "Use live tools only for what the cache cannot answer: get_calendar (open nights and today's prices), get_reservation (fee breakdown of one booking),",
+  "or when data_freshness says the cache is stale. Properties can be named by nickname, street or postcode (e.g. 'Holmbury 7', 'Durlston 52', 'E5 8RR').",
+  "Never reveal door codes, lock PINs, WiFi passwords, guest emails or phone numbers.",
+].join(" ");
 
 export class HostifyMCPV2 extends McpAgent<Env, Record<string, never>, Props> {
-  server = new McpServer(
-    { name: "Home to Host – Hostify Fast", version: "2.0.0" },
-    {
-      instructions:
-        "Use the fast cached tools for listings, bookings, reviews and financial summaries. Use live Hostify tools for current calendar availability. Never expose secrets, door codes, lock PINs, guest email addresses or phone numbers.",
-    },
-  );
-
-  private async hostify(path: string, params: Record<string, unknown> = {}) {
-    if (!this.env.HOSTIFY_API_KEY) throw new Error("HOSTIFY_API_KEY is not configured");
-    const url = new URL(path, HOSTIFY_BASE_URL);
-    for (const [key, value] of Object.entries(params)) {
-      if (value !== undefined && value !== null && value !== "") {
-        url.searchParams.set(key, typeof value === "string" ? value : JSON.stringify(value));
-      }
-    }
-    const response = await fetch(url, {
-      headers: { "content-type": "application/json", "x-api-key": this.env.HOSTIFY_API_KEY },
-    });
-    const body = await response.json().catch(() => ({ success: false, error: "Invalid Hostify response" }));
-    if (!response.ok) throw new Error(`Hostify API error ${response.status}: ${JSON.stringify(redact(body))}`);
-    return body;
-  }
-
-  private async paged(
-    path: string,
-    params: Row,
-    keys: string[],
-    maxPages: number,
-    startPage = 1,
-    pageSize = 20,
-  ): Promise<{ items: Row[]; nextPage: number; hasMore: boolean }> {
-    const all: Row[] = [];
-    let nextPage = startPage;
-    let hasMore = false;
-    for (let page = startPage; page < startPage + maxPages; page += 1) {
-      const body = await this.hostify(path, { ...params, page, per_page: pageSize });
-      const items = extractItems(body, keys);
-      all.push(...items);
-      nextPage = page + 1;
-      hasMore = items.length === pageSize;
-      if (!hasMore) break;
-    }
-    return { items: all, nextPage, hasMore };
-  }
-
-  private async batch(statements: D1PreparedStatement[]) {
-    for (let start = 0; start < statements.length; start += 75) {
-      await this.env.DB.batch(statements.slice(start, start + 75));
-    }
-  }
-
-  private async syncStatus(type: string, status: string, count = 0, error: string | null = null) {
-    const completed = status === "complete" || status === "error" ? new Date().toISOString() : null;
-    await this.env.DB.prepare(
-      `INSERT INTO sync_status (data_type,last_started_at,last_completed_at,records_synced,status,error_message)
-       VALUES (?,CURRENT_TIMESTAMP,?,?,?,?)
-       ON CONFLICT(data_type) DO UPDATE SET
-         last_started_at=CASE WHEN excluded.status='running' THEN CURRENT_TIMESTAMP ELSE last_started_at END,
-         last_completed_at=COALESCE(excluded.last_completed_at,last_completed_at),
-         records_synced=excluded.records_synced,status=excluded.status,error_message=excluded.error_message`,
-    ).bind(type, completed, count, status, error).run();
-  }
-
-  private async syncListings(): Promise<{ count: number; nextPage: number; hasMore: boolean }> {
-    const page = await this.paged("/listings", { include_related_objects: 0 }, ["listings", "items"], 20, 1, 50);
-    const items = page.items;
-    const statements = items.map((item) => {
-      const address = objectValue(item, "address", "location");
-      return this.env.DB.prepare(
-        `INSERT INTO listings (id,name,status,address,city,bedrooms,bathrooms,accommodates,currency,raw_json,updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
-         ON CONFLICT(id) DO UPDATE SET name=excluded.name,status=excluded.status,address=excluded.address,
-         city=excluded.city,bedrooms=excluded.bedrooms,bathrooms=excluded.bathrooms,
-         accommodates=excluded.accommodates,currency=excluded.currency,raw_json=excluded.raw_json,updated_at=CURRENT_TIMESTAMP`,
-      ).bind(
-        textValue(item, "id", "listing_id", "listingId"),
-        textValue(item, "name", "title", "nickname") || "Unnamed listing",
-        textValue(item, "status", "listing_status"),
-        textValue(item, "address", "full_address") || textValue(address, "formatted", "address", "line1"),
-        textValue(item, "city") || textValue(address, "city"),
-        numberValue(item, "bedrooms", "bedroom_count"),
-        numberValue(item, "bathrooms", "bathroom_count"),
-        numberValue(item, "accommodates", "guests", "max_guests"),
-        textValue(item, "currency", "currency_code"),
-        JSON.stringify(redact(item)),
-      );
-    }).filter((_, index) => Boolean(textValue(items[index], "id", "listing_id", "listingId")));
-    await this.batch(statements);
-    return { count: statements.length, nextPage: page.nextPage, hasMore: page.hasMore };
-  }
-
-  private async syncReservations(from: string, to: string, startPage: number, pages: number): Promise<{ count: number; nextPage: number; hasMore: boolean }> {
-    const page = await this.paged(
-      "/reservations",
-      { start_date: from, end_date: to, sort: "checkIn", fees: 1 },
-      ["reservations", "items"],
-      pages,
-      startPage,
-    );
-    const items = page.items;
-    const statements = items.map((item) => {
-      const listing = objectValue(item, "listing", "property");
-      const guest = objectValue(item, "guest", "customer");
-      const pricing = objectValue(item, "pricing", "financials", "money");
-      const checkIn = textValue(item, "checkIn", "check_in", "arrival_date", "arrival");
-      const checkOut = textValue(item, "checkOut", "check_out", "departure_date", "departure");
-      const id = textValue(item, "id", "reservation_id", "reservationId");
-      return { id, statement: this.env.DB.prepare(
-        `INSERT INTO reservations (id,listing_id,listing_name,guest_name,status,check_in,check_out,nights,guests,currency,total_price,host_payout,channel,raw_json,updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
-         ON CONFLICT(id) DO UPDATE SET listing_id=excluded.listing_id,listing_name=excluded.listing_name,
-         guest_name=excluded.guest_name,status=excluded.status,check_in=excluded.check_in,check_out=excluded.check_out,
-         nights=excluded.nights,guests=excluded.guests,currency=excluded.currency,total_price=excluded.total_price,
-         host_payout=excluded.host_payout,channel=excluded.channel,raw_json=excluded.raw_json,updated_at=CURRENT_TIMESTAMP`,
-      ).bind(
-        id,
-        textValue(item, "listing_id", "listingId") || textValue(listing, "id"),
-        textValue(item, "listing_name", "property_name") || textValue(listing, "name", "title"),
-        textValue(item, "guest_name", "guestName") || textValue(guest, "name", "full_name"),
-        textValue(item, "status"), checkIn, checkOut,
-        numberValue(item, "nights") ?? nightsBetween(checkIn, checkOut),
-        numberValue(item, "guests", "guest_count", "number_of_guests"),
-        textValue(item, "currency") || textValue(pricing, "currency"),
-        numberValue(item, "total_price", "totalPrice", "total") ?? numberValue(pricing, "total", "total_price"),
-        numberValue(item, "host_payout", "hostPayout", "net_income", "netIncome") ?? numberValue(pricing, "host_payout", "net", "payout"),
-        textValue(item, "channel", "source", "platform"),
-        JSON.stringify(redact(item)),
-      ) };
-    }).filter((entry) => Boolean(entry.id));
-    await this.batch(statements.map((entry) => entry.statement));
-    return { count: statements.length, nextPage: page.nextPage, hasMore: page.hasMore };
-  }
-
-  private async syncReviews(from: string, to: string, startPage: number, pages: number): Promise<{ count: number; nextPage: number; hasMore: boolean }> {
-    const page = await this.paged("/reviews", { created_from: from, created_to: to }, ["reviews", "items"], pages, startPage);
-    const items = page.items;
-    const statements = items.map((item) => {
-      const listing = objectValue(item, "listing", "property");
-      const guest = objectValue(item, "guest", "reviewer");
-      const id = textValue(item, "id", "review_id", "reviewId");
-      return { id, statement: this.env.DB.prepare(
-        `INSERT INTO reviews (id,listing_id,listing_name,reservation_id,guest_name,rating,review_text,response_text,review_date,channel,raw_json,updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
-         ON CONFLICT(id) DO UPDATE SET listing_id=excluded.listing_id,listing_name=excluded.listing_name,
-         reservation_id=excluded.reservation_id,guest_name=excluded.guest_name,rating=excluded.rating,
-         review_text=excluded.review_text,response_text=excluded.response_text,review_date=excluded.review_date,
-         channel=excluded.channel,raw_json=excluded.raw_json,updated_at=CURRENT_TIMESTAMP`,
-      ).bind(
-        id,
-        textValue(item, "listing_id", "listingId") || textValue(listing, "id"),
-        textValue(item, "listing_name", "property_name") || textValue(listing, "name", "title"),
-        textValue(item, "reservation_id", "reservationId"),
-        textValue(item, "guest_name", "reviewer_name") || textValue(guest, "name", "full_name"),
-        numberValue(item, "rating", "score", "overall_rating"),
-        textValue(item, "review", "review_text", "comment", "text"),
-        textValue(item, "response", "response_text", "reply"),
-        textValue(item, "created_at", "review_date", "date"),
-        textValue(item, "channel", "source", "platform"),
-        JSON.stringify(redact(item)),
-      ) };
-    }).filter((entry) => Boolean(entry.id));
-    await this.batch(statements.map((entry) => entry.statement));
-    return { count: statements.length, nextPage: page.nextPage, hasMore: page.hasMore };
-  }
-
-  private async syncTransactions(startPage: number, pages: number): Promise<{ count: number; nextPage: number; hasMore: boolean }> {
-    const page = await this.paged("/transactions", {}, ["transactions", "items"], pages, startPage);
-    const items = page.items;
-    const statements = items.map((item) => {
-      const listing = objectValue(item, "listing", "property");
-      const id = textValue(item, "id", "transaction_id", "transactionId");
-      return { id, statement: this.env.DB.prepare(
-        `INSERT INTO transactions (id,listing_id,listing_name,reservation_id,transaction_date,transaction_type,description,amount,currency,status,raw_json,updated_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
-         ON CONFLICT(id) DO UPDATE SET listing_id=excluded.listing_id,listing_name=excluded.listing_name,
-         reservation_id=excluded.reservation_id,transaction_date=excluded.transaction_date,
-         transaction_type=excluded.transaction_type,description=excluded.description,amount=excluded.amount,
-         currency=excluded.currency,status=excluded.status,raw_json=excluded.raw_json,updated_at=CURRENT_TIMESTAMP`,
-      ).bind(
-        id,
-        textValue(item, "listing_id", "listingId") || textValue(listing, "id"),
-        textValue(item, "listing_name", "property_name") || textValue(listing, "name", "title"),
-        textValue(item, "reservation_id", "reservationId"),
-        textValue(item, "date", "transaction_date", "created_at", "paid_at"),
-        textValue(item, "type", "transaction_type", "category"),
-        textValue(item, "description", "memo", "name"),
-        numberValue(item, "amount", "value", "total"),
-        textValue(item, "currency", "currency_code"),
-        textValue(item, "status"),
-        JSON.stringify(redact(item)),
-      ) };
-    }).filter((entry) => Boolean(entry.id));
-    await this.batch(statements.map((entry) => entry.statement));
-    return { count: statements.length, nextPage: page.nextPage, hasMore: page.hasMore };
-  }
+  server = new McpServer({ name: "Home to Host – Hostify", version: "3.0.0" }, { instructions: INSTRUCTIONS });
 
   async init() {
-    this.server.tool(
-      "refresh_hostify_cache_chunk",
-      "Refresh one small Cloudflare-safe chunk of the Hostify cache (maximum 20 records). If has_more is true, call this same action again using the returned next_page.",
-      {
-        data_type: z.enum(["listings", "reservations", "reviews", "transactions"]),
-        from_date: date.default(isoDate(-730)),
-        to_date: date.default(isoDate(730)),
-        start_page: z.number().int().positive().default(1),
-      },
-      async ({ data_type, from_date, to_date, start_page }) => {
-        await this.syncStatus(data_type, "running");
-        try {
-          const synced = data_type === "listings" ? await this.syncListings()
-            : data_type === "reservations" ? await this.syncReservations(from_date, to_date, start_page, 1)
-            : data_type === "reviews" ? await this.syncReviews(from_date, to_date, start_page, 1)
-            : await this.syncTransactions(start_page, 1);
-          const status = synced.hasMore ? "partial" : "complete";
-          await this.syncStatus(data_type, status, synced.count);
-          return result({
-            data_type,
-            status,
-            records_in_this_chunk: synced.count,
-            start_page,
-            next_page: synced.nextPage,
-            has_more: synced.hasMore,
-            from_date,
-            to_date,
-            instruction: synced.hasMore
-              ? `Call refresh_hostify_cache_chunk again with start_page=${synced.nextPage}`
-              : "This data range is complete.",
-          });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          await this.syncStatus(data_type, "error", 0, message);
-          return result({ data_type, status: "error", error: message, start_page });
-        }
-      },
-    );
+    const db = () => this.env.DB;
 
-    this.server.tool(
-      "hostify_cache_status",
-      "Show when each Hostify dataset was last refreshed and how many records were cached.",
-      {},
-      async () => result((await this.env.DB.prepare("SELECT * FROM sync_status ORDER BY data_type").all()).results),
-    );
+    // ---------------- cached (fast) ----------------
 
     this.server.tool(
       "find_property",
-      "Fast fuzzy property-name search. Use plain English names such as Durlston 52 or Ridgeway 47.",
-      { property_name: z.string().min(1), limit: z.number().int().min(1).max(20).default(10) },
-      async ({ property_name, limit }) => result((await this.env.DB.prepare(
-        `SELECT id,name,status,address,city,bedrooms,bathrooms,accommodates,currency,updated_at
-         FROM listings WHERE name LIKE ? COLLATE NOCASE ORDER BY CASE WHEN lower(name)=lower(?) THEN 0 ELSE 1 END,name LIMIT ?`,
-      ).bind(`%${property_name}%`, property_name, limit).all()).results),
+      "Instant. Find properties by nickname, title, street or postcode (any word order). Returns ids, nicknames, bedrooms and capacity.",
+      { query: z.string().min(1), limit: z.number().int().min(1).max(30).default(10) },
+      async ({ query, limit }) => {
+        try {
+          const rows = await findListings(db(), query, limit);
+          return result({ matches: rows, data_freshness: await freshness(db(), ["listings"]) });
+        } catch (e) { return failure(e); }
+      },
     );
 
     this.server.tool(
-      "get_property_bookings_fast",
-      "Fast compact booking search by property name and dates. Returns totals plus matching bookings without large raw Hostify payloads.",
+      "property_performance",
+      "Instant. Everything about one property (or every property matching a name) for a date range in one call: bookings, booked nights, " +
+      "occupancy %, gross, payout and net revenue, ADR, transactions, and the booking list. Nights and money are clipped to the range; " +
+      "enquiries and cancellations are excluded (counted separately under not_counted).",
       {
-        property_name: z.string().min(1),
+        property: z.string().min(1).describe("Nickname, street or postcode, e.g. 'Holmbury 7'"),
+        from_date: date,
+        to_date: date.describe("Inclusive last night, YYYY-MM-DD"),
+        include_bookings: z.boolean().default(true),
+        limit: z.number().int().min(1).max(200).default(40),
+      },
+      async ({ property, from_date, to_date, include_bookings, limit }) => {
+        try {
+          const data = await propertyPerformance(db(), property, from_date, to_date, include_bookings, limit);
+          return result({ ...data, data_freshness: await freshness(db(), [...BOOKING_JOBS, "listings"]) });
+        } catch (e) { return failure(e); }
+      },
+    );
+
+    this.server.tool(
+      "portfolio_performance",
+      "Instant. Ranks every live property for a date range by revenue, occupancy, nights or ADR, with portfolio totals. " +
+      "Use for 'which properties are empty / best / worst this month'. Optional filter narrows by name, street or postcode.",
+      {
         from_date: date,
         to_date: date,
-        status: z.string().optional(),
-        limit: z.number().int().min(1).max(500).default(200),
+        sort_by: z.enum(["revenue", "occupancy", "nights", "adr"]).default("revenue"),
+        order: z.enum(["desc", "asc"]).default("desc"),
+        limit: z.number().int().min(1).max(500).default(30),
+        filter: z.string().optional().describe("e.g. 'Hackney' or 'E5'"),
       },
-      async ({ property_name, from_date, to_date, status, limit }) => {
-        const filter = status ? " AND lower(status)=lower(?)" : "";
-        const values: unknown[] = [`%${property_name}%`, to_date, from_date];
-        if (status) values.push(status);
-        const summary = await this.env.DB.prepare(
-          `SELECT COUNT(*) booking_count,COALESCE(SUM(nights),0) nights,COALESCE(SUM(total_price),0) total_price,
-           COALESCE(SUM(host_payout),0) host_payout,MIN(currency) currency
-           FROM reservations WHERE listing_name LIKE ? COLLATE NOCASE AND check_in<=? AND check_out>=?${filter}`,
-        ).bind(...values).first();
-        const rows = await this.env.DB.prepare(
-          `SELECT id,listing_name,guest_name,status,check_in,check_out,nights,guests,currency,total_price,host_payout,channel
-           FROM reservations WHERE listing_name LIKE ? COLLATE NOCASE AND check_in<=? AND check_out>=?${filter}
-           ORDER BY check_in LIMIT ?`,
-        ).bind(...values, limit).all();
-        return result({ summary, bookings: rows.results, returned: rows.results.length });
+      async ({ from_date, to_date, sort_by, order, limit, filter }) => {
+        try {
+          const data = await portfolioPerformance(db(), from_date, to_date, sort_by, order, limit, filter);
+          return result({ ...data, data_freshness: await freshness(db(), [...BOOKING_JOBS, "listings"]) });
+        } catch (e) { return failure(e); }
       },
     );
 
     this.server.tool(
-      "get_property_reviews_fast",
-      "Fast review lookup for one property using its plain-English name.",
+      "arrivals_departures",
+      "Instant. Check-ins, check-outs and who is in-house, across all properties or one, for a day or several days.",
       {
-        property_name: z.string().min(1),
+        date,
+        days: z.number().int().min(1).max(31).default(1),
+        property: z.string().optional(),
+      },
+      async ({ date: day, days, property }) => {
+        try {
+          const data = await movements(db(), day, days, property);
+          return result({ ...data, data_freshness: await freshness(db(), ["reservations_hot"]) });
+        } catch (e) { return failure(e); }
+      },
+    );
+
+    this.server.tool(
+      "find_reservation",
+      "Instant. Find bookings by guest name, confirmation code or reservation id. Includes enquiries and cancellations (see status).",
+      { query: z.string().min(2), limit: z.number().int().min(1).max(50).default(15) },
+      async ({ query, limit }) => {
+        try {
+          const data = await findReservations(db(), query, limit);
+          return result({ ...data, data_freshness: await freshness(db(), BOOKING_JOBS) });
+        } catch (e) { return failure(e); }
+      },
+    );
+
+    this.server.tool(
+      "property_reviews",
+      "Instant. Review count, average rating and recent reviews for one property or the whole portfolio. " +
+      "Use max_rating (e.g. 3) to list only poor reviews.",
+      {
+        property: z.string().optional(),
         from_date: date.optional(),
         to_date: date.optional(),
-        limit: z.number().int().min(1).max(500).default(100),
+        max_rating: z.number().min(0).max(10).optional(),
+        limit: z.number().int().min(1).max(100).default(20),
       },
-      async ({ property_name, from_date, to_date, limit }) => {
-        const values: unknown[] = [`%${property_name}%`];
-        let dates = "";
-        if (from_date) { dates += " AND review_date>=?"; values.push(from_date); }
-        if (to_date) { dates += " AND review_date<=?"; values.push(to_date); }
-        const summary = await this.env.DB.prepare(
-          `SELECT COUNT(*) review_count,ROUND(AVG(rating),2) average_rating FROM reviews
-           WHERE listing_name LIKE ? COLLATE NOCASE${dates}`,
-        ).bind(...values).first();
-        const rows = await this.env.DB.prepare(
-          `SELECT id,listing_name,guest_name,rating,review_text,response_text,review_date,channel
-           FROM reviews WHERE listing_name LIKE ? COLLATE NOCASE${dates} ORDER BY review_date DESC LIMIT ?`,
-        ).bind(...values, limit).all();
-        return result({ summary, reviews: rows.results, returned: rows.results.length });
+      async ({ property, from_date, to_date, max_rating, limit }) => {
+        try {
+          const data = await reviews(db(), property, from_date, to_date, max_rating, limit);
+          return result({ ...data, data_freshness: await freshness(db(), ["reviews"]) });
+        } catch (e) { return failure(e); }
       },
     );
 
     this.server.tool(
-      "get_property_financial_summary_fast",
-      "Fast financial summary for one property and date range using cached reservations and transactions.",
-      { property_name: z.string().min(1), from_date: date, to_date: date },
-      async ({ property_name, from_date, to_date }) => {
-        const bookings = await this.env.DB.prepare(
-          `SELECT COUNT(*) booking_count,COALESCE(SUM(nights),0) booked_nights,
-           COALESCE(SUM(total_price),0) booking_total,COALESCE(SUM(host_payout),0) host_payout,MIN(currency) currency
-           FROM reservations WHERE listing_name LIKE ? COLLATE NOCASE AND check_in<=? AND check_out>=?`,
-        ).bind(`%${property_name}%`, to_date, from_date).first();
-        const transactions = await this.env.DB.prepare(
-          `SELECT COUNT(*) transaction_count,COALESCE(SUM(amount),0) transaction_total,MIN(currency) currency
-           FROM transactions WHERE listing_name LIKE ? COLLATE NOCASE AND transaction_date>=? AND transaction_date<=?`,
-        ).bind(`%${property_name}%`, from_date, to_date).first();
-        return result({ property_name, from_date, to_date, bookings, transactions });
+      "cache_status",
+      "How fresh each cached dataset is. The cache updates itself automatically; check this only if an answer looks out of date.",
+      {},
+      async () => {
+        try { return result(await syncStatus(db())); } catch (e) { return failure(e); }
       },
     );
 
     this.server.tool(
-      "list_listings",
-      "List Hostify properties directly from Hostify. Prefer find_property for faster name searches.",
-      { ...paging, include_related_objects: z.boolean().default(false) },
-      async ({ page, per_page, include_related_objects }) => result(await this.hostify("/listings", { page, per_page, include_related_objects: include_related_objects ? 1 : 0 })),
-    );
-
-    this.server.tool(
-      "get_listing",
-      "Get detailed live information for one Hostify listing. Sensitive fields are removed.",
-      { listing_id: z.number().int().positive(), include_related_objects: z.boolean().default(true) },
-      async ({ listing_id, include_related_objects }) => result(await this.hostify(`/listings/${listing_id}`, { include_related_objects: include_related_objects ? 1 : 0 })),
-    );
-
-    this.server.tool(
-      "list_reservations",
-      "List reservations directly from Hostify. Prefer get_property_bookings_fast for normal analysis.",
-      {
-        ...paging, listing_id: z.number().int().positive().optional(), start_date: date, end_date: date,
-        status: z.string().optional(), sort: z.enum(["checkIn", "checkOut", "confirmed_at"]).default("checkIn"),
-        include_fees: z.boolean().default(false),
+      "sync_now",
+      "Pull a few more pages from Hostify into the cache immediately. Rarely needed — the cache refreshes itself every few minutes.",
+      { pages: z.number().int().min(1).max(10).default(6) },
+      async ({ pages }) => {
+        try { return result(await runSync(this.env, pages)); } catch (e) { return failure(e); }
       },
-      async ({ page, per_page, listing_id, start_date, end_date, status, sort, include_fees }) => {
-        const filters = status ? [{ field: "status", operator: "=", value: status }] : undefined;
-        return result(await this.hostify("/reservations", { page, per_page, listing_id, start_date, end_date, sort, fees: include_fees ? 1 : 0, filters }));
+    );
+
+    // ---------------- live (slower, call Hostify directly) ----------------
+
+    this.server.tool(
+      "get_calendar",
+      "Live from Hostify. Nightly availability, price and minimum stay for one listing id and date range. Use find_property first for the id.",
+      { listing_id: z.number().int().positive(), start_date: date, end_date: date },
+      async ({ listing_id, start_date, end_date }) => {
+        try {
+          return result(scrub(await hostifyGet(this.env.HOSTIFY_API_KEY, "/calendar", { listing_id, start_date, end_date })));
+        } catch (e) { return failure(e); }
       },
     );
 
     this.server.tool(
       "get_reservation",
-      "Get one live reservation with pricing and fees. Sensitive fields are removed.",
-      { reservation_id: z.number().int().positive(), include_fees: z.boolean().default(true) },
-      async ({ reservation_id, include_fees }) => result(await this.hostify(`/reservations/${reservation_id}`, { fees: include_fees ? 1 : 0 })),
+      "Live from Hostify. Current details and fee breakdown of one reservation id.",
+      { reservation_id: z.number().int().positive() },
+      async ({ reservation_id }) => {
+        try {
+          const body = await hostifyGet(this.env.HOSTIFY_API_KEY, `/reservations/${reservation_id}`, { fees: 1 }) as Row;
+          const item = (body.reservation && typeof body.reservation === "object" ? body.reservation : body) as Row;
+          return result({ reservation: mapReservation(item), source: "live" });
+        } catch (e) { return failure(e); }
+      },
     );
 
     this.server.tool(
-      "get_calendar",
-      "Get live nightly availability, price and minimum stay for one listing and date range.",
-      { listing_id: z.number().int().positive(), start_date: date, end_date: date },
-      async ({ listing_id, start_date, end_date }) => result(await this.hostify("/calendar", { listing_id, start_date, end_date })),
+      "get_listing",
+      "Live from Hostify. Settings of one listing id: pricing defaults, fees, min/max nights, check-in times.",
+      { listing_id: z.number().int().positive() },
+      async ({ listing_id }) => {
+        try {
+          const body = await hostifyGet(this.env.HOSTIFY_API_KEY, `/listings/${listing_id}`, { include_related_objects: 0 }) as Row;
+          const item = (body.listing && typeof body.listing === "object" ? body.listing : body) as Row;
+          return result({ listing: mapListingDetail(item), source: "live" });
+        } catch (e) { return failure(e); }
+      },
     );
 
     this.server.tool(
-      "list_reviews",
-      "List reviews directly from Hostify. Prefer get_property_reviews_fast for property-specific analysis.",
-      { ...paging, created_from: date, created_to: date, city: z.string().optional() },
-      async ({ page, per_page, created_from, created_to, city }) => result(await this.hostify("/reviews", { page, per_page, created_from, created_to, city })),
-    );
-
-    this.server.tool(
-      "list_transactions",
-      "List transactions directly from Hostify.",
-      { ...paging, reservation_id: z.number().int().positive().optional(), listing_id: z.number().int().positive().optional() },
-      async ({ page, per_page, reservation_id, listing_id }) => result(await this.hostify("/transactions", { page, per_page, reservation_id, listing_id })),
+      "list_reservations_live",
+      "Live from Hostify, slow. Only if the cache is stale and the answer must be up to the minute. Prefer property_performance or arrivals_departures.",
+      {
+        start_date: date,
+        end_date: date,
+        listing_id: z.number().int().positive().optional(),
+        page: z.number().int().positive().default(1),
+        per_page: z.number().int().min(1).max(50).default(50),
+      },
+      async ({ start_date, end_date, listing_id, page, per_page }) => {
+        try {
+          const body = await hostifyGet(this.env.HOSTIFY_API_KEY, "/reservations", {
+            start_date, end_date, listing_id, page, per_page, sort: "checkIn", fees: 1,
+          }) as Row;
+          const items = extractItems(body, ["reservations"]).map(mapReservation).filter(Boolean);
+          return result({ total: body.total ?? null, page, per_page, reservations: items, source: "live" });
+        } catch (e) { return failure(e); }
+      },
     );
 
     this.server.tool(
       "search_hostify",
-      "Search Hostify directly across listings, reservations, guests or integrations. Sensitive fields are removed.",
-      { query: z.string().min(2), type: z.enum(["guests", "reservations", "listings", "integrations"]).optional() },
-      async ({ query, type }) => result(await this.hostify("/search", { q: query, type })),
+      "Live Hostify search across guests, reservations and listings. Prefer find_reservation / find_property, which are instant.",
+      { query: z.string().min(2), type: z.enum(["guests", "reservations", "listings"]).optional() },
+      async ({ query, type }) => {
+        try {
+          const body = await hostifyGet(this.env.HOSTIFY_API_KEY, "/search", { q: query, type }) as Row;
+          const groups: Row = {};
+          for (const [key, value] of Object.entries(body)) {
+            if (Array.isArray(value)) groups[key] = (value as Row[]).slice(0, 25).map(mapSearchItem);
+          }
+          return result({ results: groups, source: "live" });
+        } catch (e) { return failure(e); }
+      },
     );
   }
 }
 
-// Keep the original class export during the two-file migration.
+// Kept so the existing Durable Object migration still resolves.
 export class HostifyMCP extends HostifyMCPV2 {}
 
-export default new OAuthProvider({
+const oauth = new OAuthProvider({
   apiHandler: HostifyMCPV2.serve("/mcp"),
   apiRoute: "/mcp",
   authorizeEndpoint: "/authorize",
@@ -505,3 +274,14 @@ export default new OAuthProvider({
   defaultHandler: GitHubHandler as any,
   tokenEndpoint: "/token",
 });
+
+export default {
+  fetch: (request: Request, env: Env, ctx: ExecutionContext) => oauth.fetch(request, env, ctx),
+  // Cron trigger (see wrangler.jsonc): keeps the cache current with no manual refresh.
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil((async () => {
+      await ensureSchema(env.DB);
+      await runSync(env);
+    })());
+  },
+};
