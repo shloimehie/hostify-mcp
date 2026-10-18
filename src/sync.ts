@@ -54,14 +54,14 @@ export const JOBS: JobDef[] = [
   {
     // Recent and upcoming stays: kept fresh continuously.
     name: "reservations_hot",
-    label: "Bookings (last 2 weeks to 3 months ahead)",
+    label: "Bookings (last week to 2 months ahead)",
     path: "/reservations",
     keys: ["reservations"],
     perPage: PER_PAGE,
     table: "h_reservations",
     map: mapReservation as Mapper,
     restMinutes: 5,
-    window: (t) => ({ from: shift(t, -14), to: shift(t, 90) }),
+    window: (t) => ({ from: shift(t, -7), to: shift(t, 60) }),
     params: (from, to) => ({ start_date: from, end_date: to, sort: "checkIn", fees: 1 }),
   },
   {
@@ -202,7 +202,11 @@ export interface SyncReport {
   jobs: Record<string, { pages: number; rows_this_pass: number; total_expected: number | null; complete: boolean; error: string | null }>;
 }
 
-// Round-robin across due jobs, one page each, until the page budget is used.
+// Each run spends a fixed page budget. Priority jobs (properties and
+// upcoming stays) get the first 60% so they stay fresh; the large history,
+// reviews and transactions backfills share whatever is left.
+const PRIORITY_JOBS = new Set(["listings", "reservations_hot"]);
+
 export async function runSync(env: SyncEnv, pageBudget?: number): Promise<SyncReport> {
   await ensureSchema(env.DB);
   const budget = Math.max(1, Math.min(20, pageBudget ?? (Number(env.SYNC_PAGES_PER_RUN) || 8)));
@@ -211,23 +215,32 @@ export async function runSync(env: SyncEnv, pageBudget?: number): Promise<SyncRe
   const states = new Map<string, JobState>(existing.results.map((s) => [s.job, s]));
   const report: SyncReport = { pages: 0, jobs: {} };
 
-  while (report.pages < budget) {
-    const due = JOBS.filter((def) => isDue(states.get(def.name), now));
-    if (!due.length) break;
-    for (const def of due) {
-      if (report.pages >= budget) break;
-      const state = await runOnePage(env, def, states.get(def.name), now);
-      states.set(def.name, state);
-      report.pages += 1;
-      const entry = report.jobs[def.name] ?? { pages: 0, rows_this_pass: 0, total_expected: null, complete: false, error: null };
-      entry.pages += 1;
-      entry.rows_this_pass = state.rows_this_pass;
-      entry.total_expected = state.total_expected;
-      entry.complete = state.next_page === 1 && state.last_pass_completed_at === state.last_page_at;
-      entry.error = state.last_error;
-      report.jobs[def.name] = entry;
+  const step = async (def: JobDef) => {
+    const state = await runOnePage(env, def, states.get(def.name), now);
+    states.set(def.name, state);
+    report.pages += 1;
+    const entry = report.jobs[def.name] ?? { pages: 0, rows_this_pass: 0, total_expected: null, complete: false, error: null };
+    entry.pages += 1;
+    entry.rows_this_pass = state.rows_this_pass;
+    entry.total_expected = state.total_expected;
+    entry.complete = state.next_page === 1 && state.last_pass_completed_at === state.last_page_at;
+    entry.error = state.last_error;
+    report.jobs[def.name] = entry;
+  };
+
+  const spend = async (jobs: JobDef[], limit: number) => {
+    while (report.pages < limit) {
+      const due = jobs.filter((def) => isDue(states.get(def.name), now));
+      if (!due.length) return;
+      for (const def of due) {
+        if (report.pages >= limit) return;
+        await step(def);
+      }
     }
-  }
+  };
+
+  await spend(JOBS.filter((d) => PRIORITY_JOBS.has(d.name)), Math.ceil(budget * 0.6));
+  await spend([...JOBS.filter((d) => !PRIORITY_JOBS.has(d.name)), ...JOBS.filter((d) => PRIORITY_JOBS.has(d.name))], budget);
   return report;
 }
 
