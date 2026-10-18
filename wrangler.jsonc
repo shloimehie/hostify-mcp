@@ -22,6 +22,6 @@
     }
   ],
   "triggers": { "crons": ["*/2 * * * *"] },
-  "vars": { "SYNC_PAGES_PER_RUN": "14" },
+  "vars": { "SYNC_PAGES_PER_RUN": "14", "SYNC_HISTORY_DAYS": "60", "SYNC_DAILY_WRITE_SOFT_CAP": "50000", "SYNC_DAILY_WRITE_HARD_CAP": "80000" },
   "observability": { "enabled": true }
 }

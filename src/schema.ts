@@ -55,9 +55,6 @@ export const SCHEMA: string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS h_res_listing_dates ON h_reservations(listing_id, check_in, check_out)`,
   `CREATE INDEX IF NOT EXISTS h_res_check_in ON h_reservations(check_in)`,
-  `CREATE INDEX IF NOT EXISTS h_res_check_out ON h_reservations(check_out)`,
-  `CREATE INDEX IF NOT EXISTS h_res_guest ON h_reservations(guest_name COLLATE NOCASE)`,
-  `CREATE INDEX IF NOT EXISTS h_res_code ON h_reservations(confirmation_code)`,
   `CREATE TABLE IF NOT EXISTS h_reviews (
     id INTEGER PRIMARY KEY,
     listing_id INTEGER,
@@ -72,7 +69,6 @@ export const SCHEMA: string[] = [
     synced_at TEXT NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS h_rev_listing_date ON h_reviews(listing_id, review_date)`,
-  `CREATE INDEX IF NOT EXISTS h_rev_date ON h_reviews(review_date)`,
   `CREATE TABLE IF NOT EXISTS h_transactions (
     id INTEGER PRIMARY KEY,
     listing_id INTEGER,
@@ -86,7 +82,6 @@ export const SCHEMA: string[] = [
     synced_at TEXT NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS h_txn_listing_date ON h_transactions(listing_id, txn_date)`,
-  `CREATE INDEX IF NOT EXISTS h_txn_reservation ON h_transactions(reservation_id)`,
   // One row per sync job. A "pass" walks every page of one fixed window;
   // when it finishes the job rests until restart_after, then starts again.
   `CREATE TABLE IF NOT EXISTS h_sync_jobs (
@@ -104,6 +99,21 @@ export const SCHEMA: string[] = [
     last_error_at TEXT
   )`,
 ];
+
+// D1's free plan allows 100,000 rows written per day, and every index on a
+// table adds a write per row. Keep only the indexes the queries need.
+SCHEMA.push(
+  "DROP INDEX IF EXISTS h_res_check_out",
+  "DROP INDEX IF EXISTS h_res_guest",
+  "DROP INDEX IF EXISTS h_res_code",
+  "DROP INDEX IF EXISTS h_rev_date",
+  "DROP INDEX IF EXISTS h_txn_reservation",
+  // Rows written per UTC day by the sync, so it can stay under the daily cap.
+  `CREATE TABLE IF NOT EXISTS h_daily_writes (day TEXT PRIMARY KEY, rows_written INTEGER NOT NULL DEFAULT 0)`,
+  // 18 Oct 2026: the account had already used ~88% of the day's cap before
+  // this counter existed, so start that day near the limit.
+  `INSERT OR IGNORE INTO h_daily_writes (day, rows_written) VALUES ('2026-10-18', 90000)`,
+);
 
 let applied = false;
 
