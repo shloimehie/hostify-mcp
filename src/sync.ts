@@ -13,6 +13,9 @@ export interface SyncEnv {
   HOSTIFY_API_KEY: string;
   DB: D1Database;
   SYNC_PAGES_PER_RUN?: string;
+  SYNC_DAILY_WRITE_SOFT_CAP?: string;
+  SYNC_DAILY_WRITE_HARD_CAP?: string;
+  SYNC_HISTORY_DAYS?: string;
 }
 
 type Mapper = (item: Row) => Record<string, unknown> | null;
@@ -31,6 +34,10 @@ interface JobDef {
 }
 
 const PER_PAGE = 50;
+
+// How far back bookings and reviews are kept, in days (wrangler var
+// SYNC_HISTORY_DAYS, set per isolate from the env on each run).
+let HISTORY_DAYS = 60;
 
 function shift(today: Date, days: number): string {
   const d = new Date(today);
@@ -66,40 +73,31 @@ export const JOBS: JobDef[] = [
   },
   {
     name: "reviews",
-    label: "Reviews (last 2 years)",
+    label: "Reviews (history window)",
     path: "/reviews",
     keys: ["reviews"],
     perPage: PER_PAGE,
     table: "h_reviews",
     map: mapReview as Mapper,
     restMinutes: 180,
-    window: (t) => ({ from: shift(t, -730), to: shift(t, 1) }),
+    window: (t) => ({ from: shift(t, -HISTORY_DAYS), to: shift(t, 1) }),
     params: (from, to) => ({ created_from: from, created_to: to }),
   },
   {
     // Full history and far future: a slower, daily sweep.
     name: "reservations_full",
-    label: "Bookings (2 years back to 18 months ahead)",
+    label: "Bookings (history window to 6 months ahead)",
     path: "/reservations",
     keys: ["reservations"],
     perPage: PER_PAGE,
     table: "h_reservations",
     map: mapReservation as Mapper,
     restMinutes: 720,
-    window: (t) => ({ from: shift(t, -730), to: shift(t, 540) }),
+    window: (t) => ({ from: shift(t, -HISTORY_DAYS), to: shift(t, 180) }),
     params: (from, to) => ({ start_date: from, end_date: to, sort: "checkIn", fees: 1 }),
   },
-  {
-    name: "transactions",
-    label: "Transactions",
-    path: "/transactions",
-    keys: ["transactions"],
-    perPage: PER_PAGE,
-    table: "h_transactions",
-    map: mapTransaction as Mapper,
-    restMinutes: 720,
-    params: () => ({}),
-  },
+  // Transactions are paused: Hostify's /transactions endpoint has no date
+  // filter, so loading them means all ~90,000 rows.
 ];
 
 interface JobState {
@@ -121,8 +119,10 @@ function upsert(db: D1Database, table: string, row: Record<string, unknown>, now
   const columns = [...Object.keys(row), "synced_at"];
   const values = [...Object.values(row), now];
   const updates = columns.filter((c) => c !== "id").map((c) => `${c}=excluded.${c}`).join(",");
+  // Only rewrite a row when something in it changed; unchanged rows cost no writes.
+  const same = Object.keys(row).filter((c) => c !== "id").map((c) => `${table}.${c} IS excluded.${c}`).join(" AND ");
   return db
-    .prepare(`INSERT INTO ${table} (${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")}) ON CONFLICT(id) DO UPDATE SET ${updates}`)
+    .prepare(`INSERT INTO ${table} (${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")}) ON CONFLICT(id) DO UPDATE SET ${updates} WHERE NOT (${same})`)
     .bind(...values.map((v) => (v === undefined ? null : v)));
 }
 
@@ -150,7 +150,7 @@ function addMinutes(now: Date, minutes: number): string {
   return new Date(now.getTime() + minutes * 60000).toISOString();
 }
 
-async function runOnePage(env: SyncEnv, def: JobDef, prior: JobState | undefined, now: Date): Promise<JobState> {
+async function runOnePage(env: SyncEnv, def: JobDef, prior: JobState | undefined, now: Date, writes: { count: number }): Promise<JobState> {
   const nowIso = now.toISOString();
   const state: JobState = prior ? { ...prior } : {
     job: def.name, next_page: 1, window_from: null, window_to: null, pass_started_at: null, last_page_at: null,
@@ -186,7 +186,8 @@ async function runOnePage(env: SyncEnv, def: JobDef, prior: JobState | undefined
       state.last_pass_completed_at = nowIso;
       state.restart_after = addMinutes(now, def.restMinutes);
     }
-    await env.DB.batch([...statements, saveState(env.DB, state)]);
+    const results = (await env.DB.batch([...statements, saveState(env.DB, state)])) as { meta?: { rows_written?: number } }[];
+    writes.count += results.reduce((sum, r) => sum + Number(r?.meta?.rows_written ?? 0), 0);
   } catch (error) {
     // Keep the cursor so the pass resumes; back off for a few minutes.
     state.last_error = (error instanceof Error ? error.message : String(error)).slice(0, 500);
@@ -199,6 +200,9 @@ async function runOnePage(env: SyncEnv, def: JobDef, prior: JobState | undefined
 
 export interface SyncReport {
   pages: number;
+  writes_used_today?: number;
+  writes_this_run?: number;
+  skipped?: string;
   jobs: Record<string, { pages: number; rows_this_pass: number; total_expected: number | null; complete: boolean; error: string | null }>;
 }
 
@@ -209,6 +213,7 @@ const PRIORITY_JOBS = new Set(["listings", "reservations_hot"]);
 
 export async function runSync(env: SyncEnv, pageBudget?: number): Promise<SyncReport> {
   await ensureSchema(env.DB);
+  HISTORY_DAYS = Math.max(14, Math.min(730, Number(env.SYNC_HISTORY_DAYS) || 60));
   const budget = Math.max(1, Math.min(20, pageBudget ?? (Number(env.SYNC_PAGES_PER_RUN) || 8)));
   const now = new Date();
   const existing = await env.DB.prepare("SELECT * FROM h_sync_jobs").all<JobState>();
@@ -216,7 +221,7 @@ export async function runSync(env: SyncEnv, pageBudget?: number): Promise<SyncRe
   const report: SyncReport = { pages: 0, jobs: {} };
 
   const step = async (def: JobDef) => {
-    const state = await runOnePage(env, def, states.get(def.name), now);
+    const state = await runOnePage(env, def, states.get(def.name), now, writes);
     states.set(def.name, state);
     report.pages += 1;
     const entry = report.jobs[def.name] ?? { pages: 0, rows_this_pass: 0, total_expected: null, complete: false, error: null };
@@ -239,8 +244,27 @@ export async function runSync(env: SyncEnv, pageBudget?: number): Promise<SyncRe
     }
   };
 
+  // Daily write budget: the free D1 plan errors for the whole account above
+  // 100,000 rows written per UTC day. Backfill stops at the soft cap; keeping
+  // upcoming bookings fresh (cheap once loaded) stops at the hard cap.
+  const day = now.toISOString().slice(0, 10);
+  const used = Number((await env.DB.prepare("SELECT rows_written FROM h_daily_writes WHERE day=?").bind(day).first<{ rows_written: number }>())?.rows_written ?? 0);
+  const soft = Number(env.SYNC_DAILY_WRITE_SOFT_CAP) || 50000;
+  const hard = Number(env.SYNC_DAILY_WRITE_HARD_CAP) || 80000;
+  const writes = { count: 0 };
+  report.writes_used_today = used;
+  if (used >= hard) { report.skipped = "daily write cap reached"; return report; }
+
   await spend(JOBS.filter((d) => PRIORITY_JOBS.has(d.name)), Math.ceil(budget * 0.6));
-  await spend([...JOBS.filter((d) => !PRIORITY_JOBS.has(d.name)), ...JOBS.filter((d) => PRIORITY_JOBS.has(d.name))], budget);
+  if (used + writes.count < soft) {
+    await spend([...JOBS.filter((d) => !PRIORITY_JOBS.has(d.name)), ...JOBS.filter((d) => PRIORITY_JOBS.has(d.name))], budget);
+  }
+  if (writes.count > 0) {
+    await env.DB.prepare(
+      "INSERT INTO h_daily_writes (day, rows_written) VALUES (?, ?) ON CONFLICT(day) DO UPDATE SET rows_written = rows_written + excluded.rows_written",
+    ).bind(day, writes.count + 1).run();
+  }
+  report.writes_this_run = writes.count;
   return report;
 }
 
