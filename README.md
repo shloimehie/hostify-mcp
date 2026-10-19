@@ -22,7 +22,9 @@ Only allowlisted fields are stored or returned (`src/hostify.ts`). Custom fields
 
 Cached, instant: `find_property`, `property_performance`, `portfolio_performance`, `arrivals_departures`, `find_reservation`, `property_reviews`, `cache_status`, `sync_now`.
 
-Live from Hostify: `get_calendar`, `get_reservation`, `get_listing`, `list_reservations_live`, `search_hostify`.
+Live from Hostify: `get_calendar`, `get_reservation`, `get_listing`, `get_listing_content`, `list_reservations_live`, `search_hostify`.
+
+`get_listing_content` returns only public, guest-facing content for the website: photo URLs with captions, the public description sections (summary, description, space, neighbourhood, transit) and amenity names. Access, check-in and house-manual text is never read. If photos or a description can't be found, it returns the response's key names (never values) under `diagnostics` so the right field can be added.
 
 Revenue figures count confirmed bookings only, clip nights to the requested range and pro-rate money by nights. Channel copies of a listing (those with a `parent_listing_id`) roll up into the parent property.
 

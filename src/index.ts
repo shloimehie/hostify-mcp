@@ -4,7 +4,8 @@ import { McpAgent } from "agents/mcp";
 import { z } from "zod";
 import { GitHubHandler } from "./github-handler";
 import {
-  extractItems, hostifyGet, mapListingDetail, mapReservation, mapSearchItem, Row,
+  extractAmenities, extractDescription, extractItems, extractPhotos, hostifyGet, keyOutline,
+  mapListing, mapListingDetail, mapReservation, mapSearchItem, Row,
 } from "./hostify";
 import {
   findListings, findReservations, movements, portfolioPerformance, propertyPerformance, reviews,
@@ -220,6 +221,52 @@ export class HostifyMCPV2 extends McpAgent<Env, Record<string, never>, Props> {
           const body = await hostifyGet(this.env.HOSTIFY_API_KEY, `/listings/${listing_id}`, { include_related_objects: 0 }) as Row;
           const item = (body.listing && typeof body.listing === "object" ? body.listing : body) as Row;
           return result({ listing: mapListingDetail(item), source: "live" });
+        } catch (e) { return failure(e); }
+      },
+    );
+
+    this.server.tool(
+      "get_listing_content",
+      "Live from Hostify. Public, guest-facing content of one listing id for the website: photo URLs with captions (in order), " +
+      "the public description sections and amenity names. Never includes access, check-in or house-manual text.",
+      { listing_id: z.number().int().positive(), max_photos: z.number().int().min(1).max(100).default(40) },
+      async ({ listing_id, max_photos }) => {
+        try {
+          const apiKey = this.env.HOSTIFY_API_KEY;
+          const body = await hostifyGet(apiKey, `/listings/${listing_id}`, { include_related_objects: 1 }) as Row;
+          const listing = (body.listing && typeof body.listing === "object" ? body.listing : body) as Row;
+          const sources: Row[] = [listing, body];
+          const tried = [`/listings/${listing_id}?include_related_objects=1`];
+
+          // Some accounts serve photos from their own endpoint; try those only if needed.
+          if (!extractPhotos(sources).length) {
+            for (const [path, params] of [
+              [`/listings/${listing_id}/photos`, {}],
+              ["/photos", { listing_id }],
+            ] as [string, Row][]) {
+              tried.push(path);
+              try {
+                const extra = await hostifyGet(apiKey, path, params);
+                const items = extractItems(extra, ["photos", "images"]);
+                if (items.length) { sources.push({ photos: items }); break; }
+              } catch { /* endpoint not available on this account */ }
+            }
+          }
+
+          const photos = extractPhotos(sources);
+          const description = extractDescription(sources);
+          const out: Row = {
+            listing: mapListing(listing),
+            photo_count: photos.length,
+            photos: photos.slice(0, max_photos),
+            description,
+            amenities: extractAmenities(sources),
+            source: "live",
+          };
+          if (!photos.length || !Object.keys(description).length) {
+            out.diagnostics = { endpoints_tried: tried, response_keys: keyOutline(sources.slice(0, 2)) };
+          }
+          return result(out);
         } catch (e) { return failure(e); }
       },
     );

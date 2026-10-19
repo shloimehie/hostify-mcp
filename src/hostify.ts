@@ -253,6 +253,120 @@ export function mapListingDetail(item: Row): Row | null {
   };
 }
 
+// ---------- public listing content (website use) ----------
+// Only what a guest already sees on Airbnb: photo URLs + captions, the public
+// description sections and amenity names. Sections that can carry arrival
+// details (access, house manual, check-in instructions, notes, interaction)
+// are deliberately NOT read.
+
+const PHOTO_ARRAY_KEYS = ["photos", "images", "pictures", "listing_photos", "gallery", "listing_images"];
+const PHOTO_URL_KEYS = [
+  "original_file", "original", "xl_picture_url", "large", "url", "picture", "file", "image", "src", "medium", "thumbnail_file",
+];
+const DESCRIPTION_KEYS = ["summary", "description", "space", "neighborhood_overview", "neighbourhood_overview", "transit"];
+const DESCRIPTION_CONTAINER_KEYS = ["description", "descriptions", "listing_description", "listing_descriptions", "translations"];
+const AMENITY_ARRAY_KEYS = ["amenities", "listing_amenities", "facilities"];
+
+function plainText(value: unknown, max = 4000): string | null {
+  const s = str(value);
+  if (!s) return null;
+  const text = s
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return text ? text.slice(0, max) : null;
+}
+
+function httpUrl(value: unknown): string | null {
+  const s = str(value);
+  return s && /^https?:\/\//i.test(s) ? s : null;
+}
+
+function arraysUnder(sources: Row[], keys: string[]): Row[][] {
+  const found: Row[][] = [];
+  for (const source of sources) {
+    for (const key of keys) {
+      const value = source[key];
+      if (Array.isArray(value) && value.length) found.push(value as Row[]);
+    }
+  }
+  return found;
+}
+
+export interface ListingPhoto { url: string; caption: string | null; order: number | null }
+
+export function extractPhotos(sources: Row[]): ListingPhoto[] {
+  const seen = new Set<string>();
+  const photos: ListingPhoto[] = [];
+  for (const list of arraysUnder(sources, PHOTO_ARRAY_KEYS)) {
+    for (const item of list) {
+      const url = typeof item === "string" ? httpUrl(item) : httpUrl(pick(item, ...PHOTO_URL_KEYS));
+      if (!url || seen.has(url)) continue;
+      seen.add(url);
+      photos.push({
+        url,
+        caption: typeof item === "string" ? null : plainText(pick(item, "caption", "title", "description"), 300),
+        order: typeof item === "string" ? null : num(pick(item, "sort_order", "order", "position", "sort")),
+      });
+    }
+  }
+  return photos.sort((a, b) => (a.order ?? 1e9) - (b.order ?? 1e9));
+}
+
+// Descriptions can sit on the listing itself, in a nested object, or in an
+// array of per-language entries; prefer English.
+export function extractDescription(sources: Row[]): Row {
+  const candidates: Row[] = [...sources];
+  for (const source of sources) {
+    for (const key of DESCRIPTION_CONTAINER_KEYS) {
+      const value = source[key];
+      if (Array.isArray(value)) {
+        const rows = (value as Row[]).filter((x) => x && typeof x === "object");
+        const en = rows.filter((r) => /^en/i.test(String(pick(r, "language", "locale", "lang") ?? "en")));
+        candidates.push(...(en.length ? en : rows));
+      } else if (value && typeof value === "object") {
+        candidates.push(value as Row);
+      }
+    }
+  }
+  const out: Row = {};
+  for (const key of DESCRIPTION_KEYS) {
+    for (const candidate of candidates) {
+      const text = plainText(candidate[key]);
+      if (text) { out[key === "neighbourhood_overview" ? "neighborhood_overview" : key] = text; break; }
+    }
+  }
+  return out;
+}
+
+export function extractAmenities(sources: Row[]): string[] {
+  const names = new Set<string>();
+  for (const list of arraysUnder(sources, AMENITY_ARRAY_KEYS)) {
+    for (const item of list) {
+      const name = typeof item === "string" ? str(item) : str(pick(item as Row, "name", "title", "label", "amenity"));
+      if (name && name.length <= 80) names.add(name);
+    }
+  }
+  return [...names].slice(0, 120);
+}
+
+// Key names only (never values), so a miss can be diagnosed safely.
+export function keyOutline(sources: Row[]): Row {
+  const outline: Row = {};
+  sources.forEach((source, i) => {
+    outline[`object_${i}`] = Object.entries(source).map(([k, v]) =>
+      Array.isArray(v) ? `${k}[${v.length}]` : v && typeof v === "object" ? `${k}{}` : k,
+    );
+  });
+  return outline;
+}
+
 // ---------- reviews ----------
 
 export interface Review {
