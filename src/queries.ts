@@ -78,7 +78,7 @@ export async function findListings(db: Db, query: string, limit = 10): Promise<M
   const resWhere = words.map(() => "lower(COALESCE(listing_nickname,'')) LIKE ?").join(" AND ");
   const fromBookings = await db.prepare(
     `SELECT listing_id AS id, MAX(listing_nickname) AS nickname FROM h_reservations
-     WHERE listing_id IS NOT NULL AND ${resWhere} GROUP BY listing_id LIMIT ?`,
+     WHERE check_in >= date('now','-75 days') AND listing_id IS NOT NULL AND ${resWhere} GROUP BY listing_id LIMIT ?`,
   ).bind(...words.map((w) => `%${w}%`), limit).all<{ id: number; nickname: string }>();
   return fromBookings.results.map((r) => ({
     id: r.id, nickname: r.nickname, name: null, street: null, zipcode: null, city: null,
@@ -338,12 +338,19 @@ export async function findReservations(db: Db, query: string, limit: number): Pr
       .bind(Number(q), q, limit).all();
     if (byId.results.length) return { matches: byId.results };
   }
+  // Every search here must use an index: a full scan of h_reservations costs
+  // one D1 "row read" per stored booking, and the free plan allows 5M a day.
   const byCode = await db.prepare(`SELECT ${cols} FROM h_reservations WHERE confirmation_code = ? COLLATE NOCASE LIMIT ?`).bind(q, limit).all();
   if (byCode.results.length) return { matches: byCode.results };
   const words = tokens(q);
   if (!words.length) return { matches: [] };
+  // Fast path: name starts with the query ("joanne", "joanne thomas") via the NOCASE index.
+  const prefix = await db.prepare(`SELECT ${cols} FROM h_reservations WHERE guest_name LIKE ? ORDER BY check_in DESC LIMIT ?`)
+    .bind(`${q.replace(/[%_]/g, "")}%`, limit).all();
+  if (prefix.results.length) return { matches: prefix.results, note: "Includes enquiries and cancellations; check is_booking/status." };
+  // Slow path (e.g. surname only): scan only stays from the last 75 days onwards, via the check_in index.
   const rows = await db.prepare(
-    `SELECT ${cols} FROM h_reservations WHERE ${words.map(() => "lower(COALESCE(guest_name,'')) LIKE ?").join(" AND ")}
+    `SELECT ${cols} FROM h_reservations WHERE check_in >= date('now','-75 days') AND ${words.map(() => "lower(COALESCE(guest_name,'')) LIKE ?").join(" AND ")}
      ORDER BY check_in DESC LIMIT ?`,
   ).bind(...words.map((w) => `%${w}%`), limit).all();
   return { matches: rows.results, note: "Includes enquiries and cancellations; check is_booking/status." };
