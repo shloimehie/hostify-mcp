@@ -139,7 +139,9 @@ export class HostifyMCPV2 extends McpAgent<Env, Record<string, never>, Props> {
 
     this.server.tool(
       "find_reservation",
-      "Instant. Find bookings by guest name, confirmation code or reservation id. Includes enquiries and cancellations (see status).",
+      "Instant. Find bookings by confirmation code, reservation id or guest name (full name or first name works best; surname-only searches cover stays from the last 75 days on). " +
+      "Covers the cached window, about 2 months back to 6 months ahead; for older bookings use list_reservations_live. Includes enquiries and cancellations (see status). " +
+      "To check many bookings, prefer one property_performance or arrivals_departures call over many find_reservation calls.",
       { query: z.string().min(2), limit: z.number().int().min(1).max(50).default(15) },
       async ({ query, limit }) => {
         try {

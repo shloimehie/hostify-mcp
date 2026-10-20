@@ -187,7 +187,7 @@ async function runOnePage(env: SyncEnv, def: JobDef, prior: JobState | undefined
       state.restart_after = addMinutes(now, def.restMinutes);
     }
     const results = (await env.DB.batch([...statements, saveState(env.DB, state)])) as { meta?: { rows_written?: number } }[];
-    writes.count += results.reduce((sum, r) => sum + Number(r?.meta?.rows_written ?? 0), 0);
+    writes.count += (results ?? []).reduce((sum, r) => sum + Number(r?.meta?.rows_written ?? 0), 0);
   } catch (error) {
     // Keep the cursor so the pass resumes; back off for a few minutes.
     state.last_error = (error instanceof Error ? error.message : String(error)).slice(0, 500);
@@ -259,6 +259,7 @@ export async function runSync(env: SyncEnv, pageBudget?: number): Promise<SyncRe
   if (used + writes.count < soft) {
     await spend([...JOBS.filter((d) => !PRIORITY_JOBS.has(d.name)), ...JOBS.filter((d) => PRIORITY_JOBS.has(d.name))], budget);
   }
+  if (used + writes.count < soft) writes.count += await maintain(env.DB, now);
   if (writes.count > 0) {
     await env.DB.prepare(
       "INSERT INTO h_daily_writes (day, rows_written) VALUES (?, ?) ON CONFLICT(day) DO UPDATE SET rows_written = rows_written + excluded.rows_written",
@@ -266,6 +267,30 @@ export async function runSync(env: SyncEnv, pageBudget?: number): Promise<SyncRe
   }
   report.writes_this_run = writes.count;
   return report;
+}
+
+// Retention: drop cached bookings and reviews older than the history window
+// (Hostify keeps the originals), a chunk per run so deletes stay inside the
+// daily write budget. Once the old rows are gone, add the lookup indexes —
+// building them on a small table costs few writes.
+async function maintain(db: D1Database, now: Date): Promise<number> {
+  const cutoff = new Date(now.getTime() - (HISTORY_DAYS + 30) * 86400000).toISOString().slice(0, 10);
+  const results = (await db.batch([
+    db.prepare(
+      `DELETE FROM h_reservations WHERE id IN (SELECT id FROM h_reservations WHERE check_in < ? AND check_out < ? LIMIT 800)`,
+    ).bind(cutoff, cutoff),
+    db.prepare(`DELETE FROM h_reviews WHERE id IN (SELECT id FROM h_reviews WHERE review_date < ? LIMIT 400)`).bind(cutoff),
+  ])) as { meta?: { rows_written?: number; changes?: number } }[];
+  let written = (results ?? []).reduce((sum, r) => sum + Number(r?.meta?.rows_written ?? 0), 0);
+  const deleted = (results ?? []).reduce((sum, r) => sum + Number(r?.meta?.changes ?? 0), 0);
+  if (deleted === 0) {
+    const built = (await db.batch([
+      db.prepare("CREATE INDEX IF NOT EXISTS h_res_code_nc ON h_reservations(confirmation_code COLLATE NOCASE)"),
+      db.prepare("CREATE INDEX IF NOT EXISTS h_res_guest_nc ON h_reservations(guest_name COLLATE NOCASE)"),
+    ])) as { meta?: { rows_written?: number } }[];
+    written += (built ?? []).reduce((sum, r) => sum + Number(r?.meta?.rows_written ?? 0), 0);
+  }
+  return written;
 }
 
 function ageMinutes(iso: string | null, now: number): number | null {
