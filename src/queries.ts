@@ -311,20 +311,27 @@ export async function movements(db: Db, date: string, days: number, property: st
     filter = ` AND listing_id IN (${placeholders(ids.length)})`;
   }
   const cols = "id, listing_nickname AS listing, guest_name, source, check_in, check_out, nights, guests";
+  // Stays longer than 400 nights are not expected; bounding check_in keeps every query on the index.
+  const earliest = addDays(date, -400);
   const [arrivals, departures, inHouse] = await Promise.all([
-    db.prepare(`SELECT ${cols} FROM h_reservations WHERE is_booking=1 AND check_in >= ? AND check_in < ?${filter} ORDER BY check_in, listing LIMIT 300`)
+    db.prepare(`SELECT ${cols} FROM h_reservations WHERE is_booking=1 AND check_in >= ? AND check_in < ?${filter} ORDER BY check_in, listing LIMIT 200`)
       .bind(date, end, ...ids).all(),
-    db.prepare(`SELECT ${cols} FROM h_reservations WHERE is_booking=1 AND check_out >= ? AND check_out < ?${filter} ORDER BY check_out, listing LIMIT 300`)
-      .bind(date, end, ...ids).all(),
-    db.prepare(`SELECT ${cols} FROM h_reservations WHERE is_booking=1 AND check_in <= ? AND check_out > ?${filter} ORDER BY listing LIMIT 400`)
-      .bind(date, date, ...ids).all(),
+    db.prepare(`SELECT ${cols} FROM h_reservations WHERE is_booking=1 AND check_in >= ? AND check_in < ? AND check_out >= ? AND check_out < ?${filter} ORDER BY check_out, listing LIMIT 200`)
+      .bind(earliest, end, date, end, ...ids).all(),
+    db.prepare(`SELECT ${cols} FROM h_reservations WHERE is_booking=1 AND check_in >= ? AND check_in <= ? AND check_out > ?${filter} ORDER BY listing LIMIT 500`)
+      .bind(earliest, date, date, ...ids).all(),
   ]);
+  // Across the whole portfolio the in-house list runs to hundreds of guests;
+  // return it only for a property filter (or when short), otherwise just the count.
+  const showInHouse = Boolean(property) || inHouse.results.length <= 40;
   return {
     from: date,
     to: addDays(end, -1),
     arrivals: { count: arrivals.results.length, list: arrivals.results },
     departures: { count: departures.results.length, list: departures.results },
-    in_house_night_of: { date, count: inHouse.results.length, list: inHouse.results },
+    in_house_night_of: showInHouse
+      ? { date, count: inHouse.results.length, list: inHouse.results }
+      : { date, count: inHouse.results.length, note: "List omitted for the whole portfolio; pass a property to see who is staying." },
   };
 }
 

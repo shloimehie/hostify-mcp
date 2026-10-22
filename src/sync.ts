@@ -67,7 +67,7 @@ export const JOBS: JobDef[] = [
     perPage: PER_PAGE,
     table: "h_reservations",
     map: mapReservation as Mapper,
-    restMinutes: 5,
+    restMinutes: 2,
     window: (t) => ({ from: shift(t, -7), to: shift(t, 60) }),
     params: (from, to) => ({ start_date: from, end_date: to, sort: "checkIn", fees: 1 }),
   },
@@ -158,6 +158,13 @@ async function runOnePage(env: SyncEnv, def: JobDef, prior: JobState | undefined
   };
 
   // Starting a new pass: fix the date window for the whole pass so pages stay stable.
+  // A pass in progress keeps its window so pages stay stable, unless the job's
+  // window setting has changed (e.g. a new history length): then start over.
+  if (state.next_page > 1 && def.window && state.window_from && state.window_to) {
+    const w = def.window(now);
+    const drift = (a: string, b: string) => Math.abs(Date.parse(a) - Date.parse(b)) / 86400000;
+    if (drift(w.from, state.window_from) > 7 || drift(w.to, state.window_to) > 7) state.next_page = 1;
+  }
   if (state.next_page <= 1) {
     const w = def.window ? def.window(now) : null;
     state.next_page = 1;
@@ -214,9 +221,23 @@ const PRIORITY_JOBS = new Set(["listings", "reservations_hot"]);
 export async function runSync(env: SyncEnv, pageBudget?: number): Promise<SyncReport> {
   await ensureSchema(env.DB);
   HISTORY_DAYS = Math.max(14, Math.min(730, Number(env.SYNC_HISTORY_DAYS) || 60));
-  const budget = Math.max(1, Math.min(20, pageBudget ?? (Number(env.SYNC_PAGES_PER_RUN) || 8)));
   const now = new Date();
-  const existing = await env.DB.prepare("SELECT * FROM h_sync_jobs").all<JobState>();
+  // Runs start every minute; a slow run must not overlap the next one.
+  const lock = (await env.DB.prepare(
+    `INSERT INTO h_sync_jobs (job, restart_after) VALUES ('_lock', ?) ON CONFLICT(job) DO UPDATE SET restart_after = excluded.restart_after
+     WHERE h_sync_jobs.restart_after IS NULL OR h_sync_jobs.restart_after < ?`,
+  ).bind(addMinutes(now, 2), now.toISOString()).run()) as { meta?: { changes?: number } };
+  if (lock?.meta && lock.meta.changes === 0) return { pages: 0, jobs: {}, skipped: "previous run still in progress" };
+  try {
+    return await syncLocked(env, pageBudget, now);
+  } finally {
+    await env.DB.prepare("UPDATE h_sync_jobs SET restart_after = NULL WHERE job = '_lock'").run();
+  }
+}
+
+async function syncLocked(env: SyncEnv, pageBudget: number | undefined, now: Date): Promise<SyncReport> {
+  const budget = Math.max(1, Math.min(40, pageBudget ?? (Number(env.SYNC_PAGES_PER_RUN) || 8)));
+  const existing = await env.DB.prepare("SELECT * FROM h_sync_jobs WHERE job <> '_lock'").all<JobState>();
   const states = new Map<string, JobState>(existing.results.map((s) => [s.job, s]));
   const report: SyncReport = { pages: 0, jobs: {} };
 
