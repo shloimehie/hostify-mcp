@@ -21,7 +21,7 @@
       "database_id": "a6391176-d4ac-4523-b407-fe8b07ebf85c"
     }
   ],
-  "triggers": { "crons": ["*/2 * * * *"] },
-  "vars": { "SYNC_PAGES_PER_RUN": "14", "SYNC_HISTORY_DAYS": "60", "SYNC_DAILY_WRITE_SOFT_CAP": "50000", "SYNC_DAILY_WRITE_HARD_CAP": "80000" },
+  "triggers": { "crons": ["* * * * *"] },
+  "vars": { "SYNC_PAGES_PER_RUN": "30", "SYNC_HISTORY_DAYS": "365", "SYNC_DAILY_WRITE_SOFT_CAP": "1000000", "SYNC_DAILY_WRITE_HARD_CAP": "1500000" },
   "observability": { "enabled": true }
 }
