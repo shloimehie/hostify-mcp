@@ -10,6 +10,7 @@ export interface Env {
   AIRTABLE_BASE: string;
   AIRTABLE_HOMES_TABLE: string;
   AIRTABLE_ENQUIRIES_TABLE: string;
+  AIRTABLE_ENQUIRIES_BASE?: string;
   SITE_URL: string;
   ENRICH_PER_RUN?: string;
 }
@@ -129,8 +130,8 @@ async function hash(text: string) {
 
 // ---------- Airtable ----------
 
-async function airtable(env: Env, path: string, init?: RequestInit) {
-  const r = await fetch(`https://api.airtable.com/v0/${env.AIRTABLE_BASE}/${path}`, {
+async function airtable(env: Env, path: string, init?: RequestInit, base = env.AIRTABLE_BASE) {
+  const r = await fetch(`https://api.airtable.com/v0/${base}/${path}`, {
     ...init,
     headers: { Authorization: `Bearer ${env.AIRTABLE_TOKEN}`, "Content-Type": "application/json", ...(init?.headers || {}) },
   });
@@ -157,7 +158,7 @@ export async function createEnquiry(env: Env, fields: Row) {
   return airtable(env, env.AIRTABLE_ENQUIRIES_TABLE, {
     method: "POST",
     body: JSON.stringify({ records: [{ fields }], typecast: true }),
-  });
+  }, env.AIRTABLE_ENQUIRIES_BASE || env.AIRTABLE_BASE);
 }
 
 // ---------- Google Drive (shared folders) ----------

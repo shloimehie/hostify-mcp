@@ -52,19 +52,20 @@ async function enquire(req: Request, env: Env, site: string) {
   const slug = clip(d.home, 120);
   const home = slug ? await env.DB.prepare("SELECT name, area, place FROM site_homes WHERE slug=?").bind(slug).first<DbRow>() : null;
   const arrival = clip(d.arrival, 10), departure = clip(d.departure, 10);
+  // Field IDs of "Website Enquiries" in the Reservations base (appTXzJPcK4XvfdM0).
   const fields: DbRow = {
-    fldTfDNV0ws08IfCN: name,
-    fldPbQBpFuWzmbCoR: email,
-    fld2GPOfEIeDot96r: clip(d.phone, 40) || undefined,
-    fldiJxLqH0AZ1m30r: clip(d.company, 120) || undefined,
-    fld45e3zdtEhZ1X1e: TYPE_NAMES[clip(d.type, 20)] ?? "A stay",
-    fld9xHTXjf60LSgAk: home ? `${home.name}` : undefined,
-    fld1z3IaiezNbOHtF: home ? `${site}/homes/${slug}` : undefined,
-    fldW5ym0Xak6R94d4: isDate(arrival) ? arrival : undefined,
-    fldriXFhryPbXagDn: isDate(departure) ? departure : undefined,
-    fldi7GFJM504q355G: clip(d.guests, 20) || undefined,
-    fld6xjXBsn8fQh4QE: clip(d.message, 4000) || undefined,
-    fldTSh18vzLkeIDRr: "New",
+    fldAuF48Dd6s0gbAc: name,
+    fldY0pND3iM8d7l1W: email,
+    fldAgClf7mWXkz0NS: clip(d.phone, 40) || undefined,
+    fldOXvMENTHm7csGD: clip(d.company, 120) || undefined,
+    fldBJklouaUBb87ey: TYPE_NAMES[clip(d.type, 20)] ?? "A stay",
+    fldzwfReQxZNKFqwS: home ? `${home.name}` : undefined,
+    fldqBHlPY1I4exZR1: home ? `${site}/homes/${slug}` : undefined,
+    fldCw4wTDi13K7Mrx: isDate(arrival) ? arrival : undefined,
+    fld7XCDbiKp1Tpzk9: isDate(departure) ? departure : undefined,
+    fldKEhUU3RKlFkwEY: clip(d.guests, 20) || undefined,
+    fld0RUAQBwEQsyG91: clip(d.message, 4000) || undefined,
+    fldtyd7p6NkZ3ivjz: "New",
   };
   for (const k of Object.keys(fields)) if (fields[k] === undefined) delete fields[k];
   try {
