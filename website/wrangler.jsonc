@@ -16,11 +16,12 @@
   "vars": {
     "AIRTABLE_BASE": "appuAYZuCpS5ULeGm",
     "AIRTABLE_HOMES_TABLE": "tblRyriHbWHWwsvD5",
-    "AIRTABLE_ENQUIRIES_TABLE": "tblGA6mDJ1bSUeYMV",
+    "AIRTABLE_ENQUIRIES_BASE": "appTXzJPcK4XvfdM0",
+    "AIRTABLE_ENQUIRIES_TABLE": "tblsd4LMSgH9SzHmW",
     "SITE_URL": "https://hometohost.com",
     "ENRICH_PER_RUN": "40"
   },
   // Secret (add in Cloudflare → hth-website → Settings → Variables and secrets):
-  //   AIRTABLE_TOKEN  Airtable personal access token with data.records:read + data.records:write on the base above.
+  //   AIRTABLE_TOKEN  Airtable personal access token with data.records:read + data.records:write on both bases above.
   "observability": { "enabled": true }
 }
