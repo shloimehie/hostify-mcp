@@ -1,0 +1,26 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Public Home to Host website (hometohost.com). Separate worker from the Hostify connector.
+  "name": "hth-website",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-26",
+  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": true },
+  // Shares the connector's D1 database; the website only uses its own site_* tables.
+  "d1_databases": [
+    { "binding": "DB", "database_name": "hostify-data", "database_id": "a6391176-d4ac-4523-b407-fe8b07ebf85c" }
+  ],
+  // Private link to the connector for Hostify photos/descriptions, so this worker needs no Hostify key.
+  "services": [{ "binding": "HOSTIFY", "service": "hostify-mcp", "entrypoint": "SiteData" }],
+  // Re-reads Airtable every 10 minutes and refreshes a batch of homes' photos on every run.
+  "triggers": { "crons": ["*/2 * * * *"] },
+  "vars": {
+    "AIRTABLE_BASE": "appuAYZuCpS5ULeGm",
+    "AIRTABLE_HOMES_TABLE": "tblRyriHbWHWwsvD5",
+    "AIRTABLE_ENQUIRIES_TABLE": "tblGA6mDJ1bSUeYMV",
+    "SITE_URL": "https://hometohost.com",
+    "ENRICH_PER_RUN": "40"
+  },
+  // Secret (add in Cloudflare → hth-website → Settings → Variables and secrets):
+  //   AIRTABLE_TOKEN  Airtable personal access token with data.records:read + data.records:write on the base above.
+  "observability": { "enabled": true }
+}
