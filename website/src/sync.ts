@@ -23,7 +23,7 @@ export const F = {
   baths: "fldrYMN1lpVeLqYXa", area: "fld8NTkFdIW1dkVoo", city: "fldie8byPzrHJdLqb", drive: "fldgMSqDmJRrCbyyj",
   drive2: "fldhSU6tvngHJTKXG", hostify: "fldR46PrZWKnPiskd", type: "fldQLxWMiw5a3I7v7", parking: "flduAFMilUX6bKN2E",
   aircon: "fld4LBBT8sh4e2FZ4", region: "fldHlEZFDtqJM5aY0", show: "fldNHFd7rP3bsI0p4", webName: "fldNjlcezJk802hBG",
-  webDesc: "fldzWQpyG1HP1BVQS", webHighlights: "fldTUJjVrnPCirK22",
+  webDesc: "fldzWQpyG1HP1BVQS", webHighlights: "fldTUJjVrnPCirK22", cover: "fldfVRVxQ2Bb6J7yu",
 };
 
 export async function ensureSchema(db: D1Database) {
@@ -251,6 +251,10 @@ async function enrich(env: Env, rec: string, f: Row) {
       console.log("drive fail", folder, String(e));
     }
   }
+
+  // "Website cover photo" in Airtable picks which photo leads (1 = first).
+  const coverNo = num(f[F.cover]);
+  if (coverNo && coverNo > 1 && coverNo <= photos.length) photos.unshift(...photos.splice(coverNo - 1, 1));
 
   const oc = outcodeOf(address) || outcodeOf(zip);
   const { area, place } = placeFor(f, oc);
