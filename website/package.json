@@ -1,0 +1,16 @@
+{
+  "name": "hth-website",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "type-check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260628.1",
+    "typescript": "6.0.3",
+    "wrangler": "^4.105.0"
+  }
+}

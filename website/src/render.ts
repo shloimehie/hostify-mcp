@@ -1,0 +1,213 @@
+// HTML for hometohost.com: collection page, one page per home, enquiry page.
+
+export interface Home {
+  rec: string; slug: string; name: string; area: string; place: string; outcode: string;
+  beds: number | null; baths: number | null; sleeps: number | null; type: string; intro: string;
+  body: string[]; highlights: string[]; amenities: string[]; photos: { k: "h" | "d"; u: string }[]; min_nights: number;
+}
+
+export const esc = (v: unknown) =>
+  String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
+
+export const photoUrl = (p: { k: string; u: string }, w = 1200) =>
+  p.k === "d" ? `/img/d/${encodeURIComponent(p.u)}?w=${w}` : p.u;
+
+export const where = (h: Pick<Home, "area" | "place">) =>
+  h.area === "Outside London" ? h.place || "UK" : h.area === "London" ? "London" : `${h.area} London`;
+
+const half = (x: number) => String(Math.round(x * 2) / 2);
+const bedLabel = (b: number) => (b === 0 ? "Studio" : `${half(b)} bedroom${b === 1 ? "" : "s"}`);
+export function facts(h: Home) {
+  return [
+    h.beds != null ? `<span>${bedLabel(h.beds)}</span>` : "",
+    h.baths ? `<span>${half(h.baths)} bath${h.baths === 1 ? "" : "s"}</span>` : "",
+    h.sleeps ? `<span>Sleeps ${h.sleeps}</span>` : "",
+  ].join("");
+}
+
+const CSS = `
+:root{--navy:#0E1A2B;--navy-2:#1B2A41;--navy-3:#2A3B55;--gold:#C2A06B;--gold-deep:#8A6A35;--ivory:#F5F2EC;--sand:#E9E3D8;--paper:#FFF;--ink:#1A1E26;--muted:#535A66;--line:#DCD5C8;--on-navy:#F5F2EC;--on-navy-muted:#C9C3B6;--display:"Cormorant Garamond","Iowan Old Style",Georgia,serif;--body:"Montserrat","Helvetica Neue",Arial,sans-serif;--wrap:1320px;color-scheme:light}
+*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}body{margin:0;background:var(--ivory);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.7}
+a{color:inherit}img{max-width:100%;display:block}button,input,select,textarea{font:inherit;color:inherit}:focus-visible{outline:2px solid var(--gold);outline-offset:3px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+.gutter{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}.wrap{max-width:var(--wrap);margin:0 auto}
+.eyebrow{font-size:11px;letter-spacing:.3em;text-transform:uppercase;color:var(--gold-deep);font-weight:500}.on-dark .eyebrow{color:var(--gold)}
+h1,h2,h3{font-family:var(--display);font-weight:400;margin:0;text-wrap:balance;line-height:1.08}
+header.mast{background:var(--navy);color:var(--on-navy);position:sticky;top:0;z-index:5}
+header.mast .wrap{padding-block:16px;display:flex;flex-wrap:wrap;gap:12px 28px;align-items:center;justify-content:space-between}
+.brand{text-decoration:none;display:flex;flex-direction:column;gap:1px}.brand b{font-family:var(--display);font-weight:500;font-size:26px;letter-spacing:.2em}.brand span{font-size:9.5px;letter-spacing:.42em;color:var(--gold)}
+nav.top{display:flex;flex-wrap:wrap;gap:6px 26px;align-items:center;font-size:12.5px;letter-spacing:.06em}nav.top a{text-decoration:none;color:var(--on-navy-muted)}nav.top a:hover{color:var(--on-navy)}
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:46px;padding:0 24px;border:0;cursor:pointer;text-decoration:none;font-size:11.5px;letter-spacing:.2em;font-weight:600;text-transform:uppercase}
+nav.top .btn-gold,.btn-gold{background:var(--gold);color:var(--navy)}.btn-gold:hover{background:#D1B27F}.btn-navy{background:var(--navy);color:var(--on-navy)}.btn-navy:hover{background:var(--navy-2)}
+.btn-line{background:transparent;color:var(--navy);border:1px solid var(--navy)}.btn-line:hover{background:var(--navy);color:var(--on-navy)}
+.ph{position:relative;overflow:hidden;background:var(--navy-3);aspect-ratio:3/2;max-width:100%}.ph img{width:100%;height:100%;object-fit:cover;transition:transform 1.2s ease}.card:hover .ph img{transform:scale(1.04)}
+.hero{background:var(--navy);color:var(--on-navy)}.hero .wrap{padding-block:0 72px}.hero-frame{position:relative;min-height:540px;display:flex;align-items:flex-end;overflow:hidden}
+.hero-frame>img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.hero-frame::before{content:"";position:absolute;inset:0;z-index:1;background:linear-gradient(90deg,rgba(14,26,43,.55) 0%,rgba(14,26,43,0) 65%),linear-gradient(180deg,rgba(14,26,43,0) 30%,rgba(14,26,43,.85) 100%)}
+.hero-copy{position:relative;z-index:2;padding:56px clamp(20px,5vw,64px);max-width:800px;display:flex;flex-direction:column;gap:18px}.hero-copy h1{font-size:clamp(42px,6.2vw,78px)}.hero-copy p{margin:0;font-size:16.5px;font-weight:300;color:#E6E1D6;max-width:34em}
+.search{background:var(--paper);color:var(--ink);display:flex;flex-wrap:wrap;margin:-40px clamp(0px,3vw,40px) 0;position:relative;z-index:3;box-shadow:0 24px 60px rgba(8,14,28,.28)}
+.search label{flex:1 1 170px;padding:15px 20px;display:flex;flex-direction:column;gap:4px;font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
+.search select,.search input{border:0;background:transparent;font-size:15px;letter-spacing:0;text-transform:none;padding:4px 0;color:var(--ink);min-width:0}
+.search .count{flex:1 0 150px;display:flex;align-items:center;justify-content:center;padding:0 22px;background:var(--navy);color:var(--on-navy);font-size:12px;letter-spacing:.16em;text-transform:uppercase;min-height:72px;font-variant-numeric:tabular-nums}.search .count b{color:var(--gold);font-weight:600;margin-right:8px;font-size:16px;letter-spacing:0}
+section{padding-block:88px}.sec-head{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:22px;margin-bottom:40px}.sec-head h2{font-size:clamp(34px,4.2vw,52px)}.sec-head>div{display:flex;flex-direction:column;gap:12px}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:-16px 0 36px}.chips button{min-height:40px;padding:0 16px;border:1px solid #C9C0AE;background:transparent;cursor:pointer;font-size:12.5px;color:var(--ink)}.chips button[aria-pressed=true]{background:var(--navy);color:var(--on-navy);border-color:var(--navy)}.chips button span{color:var(--muted);margin-left:6px}.chips button[aria-pressed=true] span{color:var(--gold)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));gap:44px 28px}.card{text-decoration:none;display:flex;flex-direction:column;gap:14px;color:var(--ink)}
+.card-body{display:flex;flex-direction:column;gap:3px}.card-body .area{font-size:10.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--gold-deep)}.card-body h3{font-size:27px}
+.facts{display:flex;flex-wrap:wrap;gap:2px 12px;font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}.facts span+span::before{content:"·";margin-right:12px;color:#B9B0A0}
+.more{display:flex;flex-direction:column;align-items:center;gap:12px;margin-top:56px;color:var(--muted);font-size:13px}.empty{padding:48px 0;color:var(--muted)}
+.band{background:var(--sand)}.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,250px),1fr));gap:36px}.steps div{border-top:1px solid var(--navy);padding-top:20px;display:flex;flex-direction:column;gap:10px}.steps i{font-style:normal;font-family:var(--display);font-size:40px;color:var(--gold-deep);line-height:1}.steps b{font-weight:500;font-size:17px}.steps p{margin:0;color:var(--muted);font-size:14.5px}
+.navy-band{background:var(--navy);color:var(--on-navy)}.split{display:flex;flex-wrap:wrap;gap:56px;align-items:center}.split>*{flex:1 1 420px;min-width:0}.split h2{font-size:clamp(34px,4.2vw,52px);margin:14px 0 18px}.split p{margin:0 0 24px;color:var(--on-navy-muted);font-weight:300;max-width:34em}
+.stats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--navy-3);border:1px solid var(--navy-3)}.stats div{background:var(--navy);padding:28px;display:flex;flex-direction:column;gap:6px}.stats b{font-family:var(--display);font-weight:400;font-size:44px;color:var(--gold);line-height:1}.stats span{font-size:13px;color:var(--on-navy-muted)}
+.crumb{font-size:11.5px;letter-spacing:.2em;text-transform:uppercase;text-decoration:none;color:var(--muted)}.crumb:hover{color:var(--ink)}
+.d-head{padding-block:40px 26px;display:flex;flex-wrap:wrap;gap:20px 40px;justify-content:space-between;align-items:flex-end}.d-head>div:first-child{display:flex;flex-direction:column;gap:12px;min-width:0}.d-head h1{font-size:clamp(40px,5.6vw,68px)}
+.kf{display:flex;flex-wrap:wrap;gap:28px}.kf div{display:flex;flex-direction:column;gap:2px}.kf small{font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted)}.kf b{font-family:var(--display);font-weight:500;font-size:32px;line-height:1.1}
+.gallery{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,1fr);gap:10px;align-items:start}.gallery .side{display:grid;gap:10px}.gallery .side button{padding:0;border:0;cursor:pointer;background:none}.gallery .side button[aria-current=true] .ph{outline:2px solid var(--gold);outline-offset:-2px}
+.thumbs{display:flex;gap:8px;overflow-x:auto;margin-top:10px}.thumbs button{flex:0 0 120px;padding:0;border:0;cursor:pointer;background:none}.thumbs button[aria-current=true] .ph{outline:2px solid var(--gold);outline-offset:-2px}
+@media (max-width:760px){.gallery{grid-template-columns:1fr}.gallery .side{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.d-body{display:flex;flex-wrap:wrap;gap:56px;align-items:flex-start;padding-block:52px 96px}.d-main{flex:999 1 520px;min-width:0;display:flex;flex-direction:column;gap:40px}.d-main h2{font-size:34px}.d-main p{margin:0 0 14px;max-width:62ch;color:#333A45}
+.block{border-top:1px solid var(--line);padding-top:30px;display:flex;flex-direction:column;gap:18px}.hl-list{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,230px),1fr));gap:12px 28px}.hl-list li{display:flex;gap:12px;align-items:flex-start;font-size:14.5px}.hl-list svg{flex:0 0 auto;margin-top:5px}
+.amen{display:flex;flex-wrap:wrap;gap:8px}.amen span{font-size:12.5px;padding:6px 12px;border:1px solid var(--line);background:var(--paper)}
+.aside{flex:1 1 320px;position:sticky;top:96px;background:var(--navy);color:var(--on-navy);padding:34px 30px;display:flex;flex-direction:column;gap:16px}.aside h3{font-size:30px}.aside p{margin:0;font-size:13.5px;color:var(--on-navy-muted);font-weight:300}@media (max-width:900px){.aside{position:static}}
+.form{background:var(--paper);border:1px solid var(--line);padding:clamp(24px,4vw,48px);display:flex;flex-direction:column;gap:26px}.types{display:flex;flex-wrap:wrap;gap:10px}.types label{min-height:44px;padding:0 18px;border:1px solid #BDB4A3;display:inline-flex;align-items:center;cursor:pointer;font-size:13px}.types input{position:absolute;opacity:0}.types label:has(input:checked){background:var(--navy);border-color:var(--navy);color:var(--on-navy)}.types label:has(input:focus-visible){outline:2px solid var(--gold);outline-offset:3px}
+.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:22px 26px}.field{display:flex;flex-direction:column;gap:6px;font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);min-width:0}
+.field input,.field select,.field textarea{border:0;border-bottom:1px solid #BDB4A3;padding:9px 0;font-size:15.5px;letter-spacing:0;text-transform:none;background:transparent;color:var(--ink);border-radius:0;min-width:0}.field textarea{border:1px solid var(--line);padding:12px;background:#FBFAF7;resize:vertical;min-height:110px}
+.form-foot{display:flex;flex-wrap:wrap;gap:16px;align-items:center;justify-content:space-between}.form-foot small{color:var(--muted);max-width:36em;font-size:12.5px}.hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}
+.thanks{display:flex;flex-direction:column;gap:16px;align-items:flex-start}.thanks h2{font-size:42px}.thanks p{margin:0;color:var(--muted);max-width:40em}.err{color:#9B2C2C}
+footer{background:var(--navy);color:var(--on-navy-muted);font-size:13px}footer .wrap{padding-block:56px 36px;display:flex;flex-direction:column;gap:36px}.f-top{display:flex;flex-wrap:wrap;gap:32px;justify-content:space-between}.f-top b{font-family:var(--display);font-weight:500;font-size:24px;letter-spacing:.2em;color:var(--on-navy);display:block;margin-bottom:6px}
+.f-cols{display:flex;flex-wrap:wrap;gap:56px;line-height:2}.f-cols div{display:flex;flex-direction:column}.f-cols small{font-size:10.5px;letter-spacing:.24em;text-transform:uppercase;color:var(--gold);margin-bottom:6px}.f-cols a{text-decoration:none;color:#E3DED2}
+.f-base{border-top:1px solid var(--navy-3);padding-top:20px;display:flex;flex-wrap:wrap;gap:10px;justify-content:space-between;font-size:12px}`;
+
+const CHECK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A6A35" stroke-width="2" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5"/></svg>';
+
+export function page(opts: { title: string; description: string; canonical: string; body: string; image?: string; script?: string }) {
+  return `<!doctype html><html lang="en-GB"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>${esc(opts.title)}</title><meta name="description" content="${esc(opts.description)}"><link rel="canonical" href="${esc(opts.canonical)}">
+<meta property="og:title" content="${esc(opts.title)}"><meta property="og:description" content="${esc(opts.description)}"><meta property="og:type" content="website">
+${opts.image ? `<meta property="og:image" content="${esc(opts.image)}">` : ""}<meta name="theme-color" content="#0E1A2B">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Montserrat:wght@300;400;500;600&display=swap">
+<style>${CSS}</style></head><body>
+<header class="mast gutter"><div class="wrap"><a class="brand" href="/"><b>HOME TO HOST</b><span>PRIVATE STAYS · LONDON &amp; UK</span></a>
+<nav class="top" aria-label="Main"><a href="/#homes">Our homes</a><a href="/#corporate">Corporate stays</a><a href="/#how">How it works</a><a class="btn btn-gold" href="/enquire">Enquire</a></nav></div></header>
+<main>${opts.body}</main>
+<footer class="gutter"><div class="wrap"><div class="f-top"><div style="max-width:320px"><b>HOME TO HOST</b>Private homes and personally hosted stays across London and the UK.</div>
+<div class="f-cols"><div><small>Stays</small><a href="/#homes">Our homes</a><a href="/#corporate">Corporate stays</a><a href="/enquire">Enquire</a></div>
+<div><small>Contact</small><a href="tel:+442034882323">020 3488 2323</a><a href="mailto:info@hometohost.com">info@hometohost.com</a><span>Out of hours: 07588 098809</span></div></div></div>
+<div class="f-base"><span>© ${new Date().getFullYear()} Home to Host Ltd · Company no. 12184608</span><span>hometohost.com</span></div></div></footer>
+${opts.script ? `<script>${opts.script}</script>` : ""}</body></html>`;
+}
+
+// ---------- collection page ----------
+
+export function homePage(homes: Home[], site: string) {
+  const data = homes.map((h) => ({
+    s: h.slug, n: h.name, a: h.area, w: where(h), o: h.outcode, b: h.beds, ba: h.baths, sl: h.sleeps, t: h.type,
+    c: h.photos[0] ? photoUrl(h.photos[0], 800) : "",
+  }));
+  const london = homes.filter((h) => h.area !== "Outside London").length;
+  const body = `
+<div class="hero gutter on-dark"><div class="wrap"><div class="hero-frame"><img src="/hero.jpg" alt="A Tudor-style manor house at dusk behind a long lawn" fetchpriority="high">
+<div class="hero-copy"><span class="eyebrow">London &amp; across the UK</span><h1>Homes across London, and further afield.</h1>
+<p>Apartments, townhouses and grand houses by the sea, each prepared and looked after by our own team. Tell us your dates and we'll come back with the homes that fit.</p></div></div>
+<form class="search" id="filters" aria-label="Filter homes" onsubmit="return false">
+<label for="f-q">Search<input id="f-q" type="search" placeholder="Street, area or postcode" autocomplete="off"></label>
+<label for="f-beds">Bedrooms<select id="f-beds"><option value="0">Any</option><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option><option value="4">4+</option><option value="5">5+</option><option value="6">6+</option></select></label>
+<label for="f-guests">Guests<select id="f-guests"><option value="0">Any</option><option value="2">2+</option><option value="4">4+</option><option value="6">6+</option><option value="8">8+</option><option value="10">10+</option><option value="12">12+</option></select></label>
+<div class="count" aria-live="polite"><b id="f-count">${homes.length}</b> homes</div></form></div></div>
+<section id="homes" class="gutter"><div class="wrap"><div class="sec-head"><div><span class="eyebrow">The collection</span><h2>Every home, prepared by our team</h2></div><a class="btn btn-line" href="/enquire">Ask about a home</a></div>
+<div class="chips" id="chips" role="group" aria-label="Area"></div><div class="grid" id="grid"></div>
+<p class="empty" id="empty" hidden>No homes match. Try fewer bedrooms or guests, or a different area.</p>
+<div class="more" id="more" hidden><span id="more-label"></span><button class="btn btn-line" type="button" id="more-btn">Show more homes</button></div>
+<noscript><ul>${homes.map((h) => `<li><a href="/homes/${esc(h.slug)}">${esc(h.name)}, ${esc(where(h))}</a></li>`).join("")}</ul></noscript></div></section>
+<section id="how" class="band gutter"><div class="wrap"><div class="sec-head"><div><span class="eyebrow">How an enquiry works</span><h2>One conversation, no booking engine</h2></div></div>
+<div class="steps"><div><i>1</i><b>Tell us about your stay</b><p>Dates, guests, area and anything you need, such as parking, pets or a desk for working.</p></div>
+<div><i>2</i><b>Get a personal shortlist</b><p>We reply with the homes that suit, honest notes on each and a rate for your dates.</p></div>
+<div><i>3</i><b>Confirm directly with us</b><p>Agree the details with the team. We prepare the home and stay in touch until you leave.</p></div></div></div></section>
+<section id="corporate" class="navy-band gutter on-dark"><div class="wrap split"><div><span class="eyebrow">Corporate &amp; extended stays</span><h2>A home for the whole assignment.</h2>
+<p>Relocations, project teams, insurance placements and long stays. One contact for your booking team, homes prepared to the same standard every time, and straightforward invoicing.</p>
+<a class="btn btn-gold" href="/enquire?type=corporate">Corporate enquiry</a></div>
+<div class="stats"><div><b>${homes.length}</b><span>homes on this site</span></div><div><b>24/7</b><span>guest support line</span></div><div><b>${london}</b><span>homes in London</span></div><div><b>Pets</b><span>welcome in our homes</span></div></div></div></section>`;
+  const script = `const H=${JSON.stringify(data).replace(/</g, "\\u003c")};const PAGE=24;let shown=PAGE,area="All";const $=i=>document.getElementById(i);
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));const half=x=>String(Math.round(x*2)/2);
+const facts=h=>[h.b!=null?"<span>"+(h.b===0?"Studio":half(h.b)+" bedroom"+(h.b===1?"":"s"))+"</span>":"",h.ba?"<span>"+half(h.ba)+" bath"+(h.ba===1?"":"s")+"</span>":"",h.sl?"<span>Sleeps "+h.sl+"</span>":""].join("");
+const AREAS=["North","East","South","West","Central","Outside London"];
+function list(){const q=$("f-q").value.trim().toLowerCase(),b=+$("f-beds").value,g=+$("f-guests").value;return H.filter(h=>(area==="All"||h.a===area)&&(!b||(h.b||0)>=b)&&(!g||(h.sl||0)>=g)&&(!q||(h.n+" "+h.w+" "+h.o+" "+(h.t||"")).toLowerCase().includes(q)))}
+function chips(){$("chips").innerHTML=[["All",H.length],...AREAS.map(a=>[a,H.filter(h=>h.a===a).length])].filter(x=>x[1]).map(([k,c])=>'<button type="button" data-a="'+k+'" aria-pressed="'+(k===area)+'">'+(k==="All"||k==="Outside London"?k:k+" London")+"<span>"+c+"</span></button>").join("")}
+function grid(){const l=list();$("grid").innerHTML=l.slice(0,shown).map((h,i)=>'<a class="card" href="/homes/'+esc(h.s)+'"><div class="ph">'+(h.c?'<img src="'+esc(h.c)+'" alt="'+esc(h.n)+'" loading="'+(i<6?"eager":"lazy")+'" decoding="async">':"")+'</div><div class="card-body"><span class="area">'+esc(h.w)+(h.o?" · "+esc(h.o):"")+"</span><h3>"+esc(h.n)+'</h3><div class="facts">'+facts(h)+"</div></div></a>").join("");
+$("f-count").textContent=l.length;$("empty").hidden=l.length>0;$("more").hidden=l.length<=shown;$("more-label").textContent="Showing "+Math.min(shown,l.length)+" of "+l.length}
+$("filters").addEventListener("input",()=>{shown=PAGE;grid()});$("chips").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;area=b.dataset.a;chips();shown=PAGE;grid()});
+$("more-btn").addEventListener("click",()=>{shown+=PAGE;grid()});chips();grid();`;
+  return page({
+    title: "Home to Host · Private homes in London and across the UK",
+    description: `${homes.length} private homes in London and across the UK, from apartments to large family houses. Enquire for a personal shortlist and rate.`,
+    canonical: site + "/", image: site + "/hero.jpg", body, script,
+  });
+}
+
+// ---------- one home ----------
+
+export function homeDetail(h: Home, site: string) {
+  const photos = h.photos.slice(0, 9);
+  const main = photos[0];
+  const side = photos.slice(1, 4);
+  const extra = photos.length > 4 ? photos : [];
+  const btn = (p: Home["photos"][number], i: number) =>
+    `<button type="button" data-src="${esc(photoUrl(p, 1600))}" aria-label="Show photo ${i + 1}"${i === 0 ? ' aria-current="true"' : ""}><div class="ph"><img src="${esc(photoUrl(p, 500))}" alt="" loading="lazy" decoding="async"></div></button>`;
+  const body = `<div class="gutter"><div class="wrap">
+<div class="d-head"><div><a class="crumb" href="/#homes">← The collection</a><span class="eyebrow">${esc(where(h))}${h.outcode ? " · " + esc(h.outcode) : ""}</span><h1>${esc(h.name)}</h1></div>
+<div class="kf">${h.beds != null ? `<div><small>Bedrooms</small><b>${h.beds === 0 ? "Studio" : half(h.beds)}</b></div>` : ""}${h.baths ? `<div><small>Bathrooms</small><b>${half(h.baths)}</b></div>` : ""}${h.sleeps ? `<div><small>Sleeps</small><b>${h.sleeps}</b></div>` : ""}</div></div>
+<div class="gallery"${side.length ? "" : ' style="grid-template-columns:1fr"'}><div class="ph"><img id="main-photo" src="${main ? esc(photoUrl(main, 1600)) : ""}" alt="${esc(h.name)}" fetchpriority="high"></div>
+${side.length ? `<div class="side">${side.map((p, i) => btn(p, i + 1)).join("")}</div>` : ""}</div>
+${extra.length ? `<div class="thumbs" aria-label="More photos">${extra.map((p, i) => btn(p, i)).join("")}</div>` : ""}
+<div class="d-body"><div class="d-main"><div style="display:flex;flex-direction:column;gap:14px">${h.intro ? `<h2>${esc(h.intro)}</h2>` : ""}${h.body.map((p) => `<p>${esc(p)}</p>`).join("")}</div>
+${h.highlights.length ? `<div class="block"><span class="eyebrow">Highlights</span><ul class="hl-list">${h.highlights.map((x) => `<li>${CHECK}<span>${esc(x)}</span></li>`).join("")}</ul></div>` : ""}
+${h.amenities.length ? `<div class="block"><span class="eyebrow">In the home</span><div class="amen">${h.amenities.map((x) => `<span>${esc(x)}</span>`).join("")}</div></div>` : ""}
+<div class="block"><span class="eyebrow">Every stay includes</span><ul class="hl-list">${["24/7 guest support", "Professional clean before arrival", "Fresh linen and towels", "Self check-in"].map((x) => `<li>${CHECK}<span>${x}</span></li>`).join("")}</ul></div></div>
+<aside class="aside on-dark"><span class="eyebrow">Enquire about this home</span><h3>Rates on enquiry</h3>
+<p>Send your dates and we'll confirm availability and a rate for your stay. Nothing is booked until you've agreed it with us.${h.min_nights >= 28 ? " This home is available for stays of 28 nights or more." : ""}</p>
+<a class="btn btn-gold" href="/enquire?home=${encodeURIComponent(h.slug)}">Enquire now</a><p>Or call <a href="tel:+442034882323" style="color:var(--on-navy)">020 3488 2323</a></p></aside></div></div></div>`;
+  const script = `document.addEventListener("click",e=>{const b=e.target.closest("button[data-src]");if(!b)return;document.getElementById("main-photo").src=b.dataset.src;document.querySelectorAll("button[data-src]").forEach(x=>x.toggleAttribute("aria-current",x.dataset.src===b.dataset.src))});`;
+  return page({
+    title: `${h.name}, ${where(h)} · Home to Host`,
+    description: (h.intro || `${h.name} in ${where(h)}`).slice(0, 155),
+    canonical: `${site}/homes/${h.slug}`, image: main ? (main.k === "h" ? main.u : site + photoUrl(main, 1200)) : undefined, body, script,
+  });
+}
+
+// ---------- enquiry page ----------
+
+export function enquirePage(homes: Pick<Home, "slug" | "name" | "area" | "place" | "beds">[], site: string, preset: { home?: string; type?: string }) {
+  const types = [["stay", "A stay"], ["corporate", "Corporate / long stay"], ["owner", "Listing my home"]];
+  const pick = types.some((t) => t[0] === preset.type) ? preset.type : "stay";
+  const opts = [...homes].sort((a, b) => a.name.localeCompare(b.name)).map((h) =>
+    `<option value="${esc(h.slug)}"${h.slug === preset.home ? " selected" : ""}>${esc(h.name)} · ${esc(where(h))}${h.beds != null ? " · " + (h.beds === 0 ? "studio" : half(h.beds) + " bed") : ""}</option>`).join("");
+  const body = `<section class="gutter"><div class="wrap split" style="align-items:flex-start">
+<div style="flex:1 1 320px;display:flex;flex-direction:column;gap:18px"><a class="crumb" href="/#homes">← The collection</a><span class="eyebrow">Enquire</span>
+<h1 style="font-size:clamp(42px,5.6vw,66px)">Tell us about your stay.</h1><p style="margin:0;color:var(--muted);max-width:34em">There's no instant booking. Send a few details and someone from our team will reply personally with suitable homes, availability and a rate.</p>
+<div style="display:flex;flex-direction:column;gap:14px;border-top:1px solid var(--line);padding-top:22px"><div><div class="eyebrow" style="color:var(--muted)">Call</div><a href="tel:+442034882323" style="font-size:18px;text-decoration:none">020 3488 2323</a></div>
+<div><div class="eyebrow" style="color:var(--muted)">Email</div><a href="mailto:info@hometohost.com" style="font-size:18px;text-decoration:none">info@hometohost.com</a></div></div></div>
+<div style="flex:999 1 560px;min-width:0"><form class="form" id="enq" method="post" action="/api/enquire" novalidate>
+<fieldset style="border:0;padding:0;margin:0;display:flex;flex-direction:column;gap:12px"><legend class="field" style="padding:0;margin-bottom:12px">I'm enquiring about</legend><div class="types">
+${types.map(([v, l]) => `<label><input type="radio" name="type" value="${v}"${v === pick ? " checked" : ""}>${l}</label>`).join("")}</div></fieldset>
+<div class="fields"><label class="field" for="e-home">Home<select id="e-home" name="home"><option value="">Not sure yet</option>${opts}</select></label>
+<label class="field" for="e-guests">Guests<select id="e-guests" name="guests"><option>1–2</option><option>3–4</option><option>5–8</option><option>9–12</option><option>13+</option></select></label>
+<label class="field" for="e-in">Arrival<input id="e-in" name="arrival" type="date"></label><label class="field" for="e-out">Departure<input id="e-out" name="departure" type="date"></label>
+<label class="field" for="e-name">Full name<input id="e-name" name="name" type="text" autocomplete="name" required maxlength="120"></label>
+<label class="field" for="e-email">Email<input id="e-email" name="email" type="email" autocomplete="email" required maxlength="200"></label>
+<label class="field" for="e-phone">Phone<input id="e-phone" name="phone" type="tel" autocomplete="tel" maxlength="40"></label>
+<label class="field" for="e-co">Company (optional)<input id="e-co" name="company" type="text" autocomplete="organization" maxlength="120"></label></div>
+<label class="field" for="e-msg">Anything we should know?<textarea id="e-msg" name="message" maxlength="4000" placeholder="Parking, pets, workspace, accessibility…"></textarea></label>
+<div class="hp" aria-hidden="true"><label>Leave this empty<input name="website" tabindex="-1" autocomplete="off"></label></div>
+<div class="form-foot"><small id="e-hint">Sending this doesn't book anything. It starts a conversation with our team.</small><button class="btn btn-navy" type="submit" id="e-send">Send enquiry</button></div></form>
+<div class="form thanks" id="thanks" hidden tabindex="-1"><span class="eyebrow">Received</span><h2>Thank you. We'll be in touch.</h2>
+<p>Someone from our team will reply personally with availability and a rate. If your stay is urgent, call us on 020 3488 2323.</p><a class="btn btn-line" href="/#homes">Back to the collection</a></div></div></div></section>`;
+  const script = `const f=document.getElementById("enq"),hint=document.getElementById("e-hint"),send=document.getElementById("e-send");
+f.addEventListener("submit",async e=>{e.preventDefault();const d=Object.fromEntries(new FormData(f));if(!String(d.name||"").trim()||!/^\\S+@\\S+\\.\\S+$/.test(String(d.email||"").trim())){hint.textContent="Add your name and a valid email so we can reply.";hint.className="err";return}
+send.disabled=true;send.textContent="Sending…";try{const r=await fetch("/api/enquire",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(d)});const j=await r.json().catch(()=>({}));
+if(!r.ok)throw new Error(j.error||"Something went wrong");f.hidden=true;const t=document.getElementById("thanks");t.hidden=false;t.focus()}catch(err){hint.textContent=(err.message||"Something went wrong")+". Please try again, or email info@hometohost.com.";hint.className="err";send.disabled=false;send.textContent="Send enquiry"}});`;
+  return page({ title: "Enquire · Home to Host", description: "Tell us your dates and guests and we'll reply personally with homes that suit and a rate.", canonical: site + "/enquire", body, script });
+}
+
+export function notFoundPage(site: string) {
+  return page({ title: "Not found · Home to Host", description: "This page isn't available.", canonical: site + "/",
+    body: `<section class="gutter"><div class="wrap" style="display:flex;flex-direction:column;gap:18px;align-items:flex-start"><span class="eyebrow">Not found</span><h1 style="font-size:52px">This home isn't available any more.</h1><p style="margin:0;color:var(--muted)">It may have been taken off the website. Browse the collection or tell us what you need.</p><div style="display:flex;gap:12px;flex-wrap:wrap"><a class="btn btn-navy" href="/#homes">See the collection</a><a class="btn btn-line" href="/enquire">Make an enquiry</a></div></div></section>` });
+}

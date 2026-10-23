@@ -1,4 +1,5 @@
 import OAuthProvider from "@cloudflare/workers-oauth-provider";
+import { WorkerEntrypoint } from "cloudflare:workers";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { McpAgent } from "agents/mcp";
 import { z } from "zod";
@@ -234,41 +235,7 @@ export class HostifyMCPV2 extends McpAgent<Env, Record<string, never>, Props> {
       { listing_id: z.number().int().positive(), max_photos: z.number().int().min(1).max(100).default(40) },
       async ({ listing_id, max_photos }) => {
         try {
-          const apiKey = this.env.HOSTIFY_API_KEY;
-          const body = await hostifyGet(apiKey, `/listings/${listing_id}`, { include_related_objects: 1 }) as Row;
-          const listing = (body.listing && typeof body.listing === "object" ? body.listing : body) as Row;
-          const sources: Row[] = [listing, body];
-          const tried = [`/listings/${listing_id}?include_related_objects=1`];
-
-          // Some accounts serve photos from their own endpoint; try those only if needed.
-          if (!extractPhotos(sources).length) {
-            for (const [path, params] of [
-              [`/listings/${listing_id}/photos`, {}],
-              ["/photos", { listing_id }],
-            ] as [string, Row][]) {
-              tried.push(path);
-              try {
-                const extra = await hostifyGet(apiKey, path, params);
-                const items = extractItems(extra, ["photos", "images"]);
-                if (items.length) { sources.push({ photos: items }); break; }
-              } catch { /* endpoint not available on this account */ }
-            }
-          }
-
-          const photos = extractPhotos(sources);
-          const description = extractDescription(sources);
-          const out: Row = {
-            listing: mapListing(listing),
-            photo_count: photos.length,
-            photos: photos.slice(0, max_photos),
-            description,
-            amenities: extractAmenities(sources),
-            source: "live",
-          };
-          if (!photos.length || !Object.keys(description).length) {
-            out.diagnostics = { endpoints_tried: tried, response_keys: keyOutline(sources.slice(0, 2)) };
-          }
-          return result(out);
+          return result(await listingContent(this.env.HOSTIFY_API_KEY, listing_id, max_photos, true));
         } catch (e) { return failure(e); }
       },
     );
@@ -314,6 +281,54 @@ export class HostifyMCPV2 extends McpAgent<Env, Record<string, never>, Props> {
 
 // Kept so the existing Durable Object migration still resolves.
 export class HostifyMCP extends HostifyMCPV2 {}
+
+// Public, guest-facing content of one listing (photos, description sections, amenities, basic facts).
+async function listingContent(apiKey: string, listingId: number, maxPhotos: number, withDiagnostics = false): Promise<Row> {
+  const body = await hostifyGet(apiKey, `/listings/${listingId}`, { include_related_objects: 1 }) as Row;
+  const listing = (body.listing && typeof body.listing === "object" ? body.listing : body) as Row;
+  const sources: Row[] = [listing, body];
+  const tried = [`/listings/${listingId}?include_related_objects=1`];
+
+  // Some accounts serve photos from their own endpoint; try those only if needed.
+  if (!extractPhotos(sources).length) {
+    for (const [path, params] of [
+      [`/listings/${listingId}/photos`, {}],
+      ["/photos", { listing_id: listingId }],
+    ] as [string, Row][]) {
+      tried.push(path);
+      try {
+        const extra = await hostifyGet(apiKey, path, params);
+        const items = extractItems(extra, ["photos", "images"]);
+        if (items.length) { sources.push({ photos: items }); break; }
+      } catch { /* endpoint not available on this account */ }
+    }
+  }
+
+  const photos = extractPhotos(sources);
+  const description = extractDescription(sources);
+  const out: Row = {
+    listing: mapListing(listing),
+    photo_count: photos.length,
+    photos: photos.slice(0, maxPhotos),
+    description,
+    amenities: extractAmenities(sources),
+    source: "live",
+  };
+  if (withDiagnostics && (!photos.length || !Object.keys(description).length)) {
+    out.diagnostics = { endpoints_tried: tried, response_keys: keyOutline(sources.slice(0, 2)) };
+  }
+  return out;
+}
+
+// Private entry point for the Home to Host website worker (service binding "HOSTIFY").
+// It is not reachable from the internet: only workers on this account that bind to it can call it,
+// so the website never needs its own Hostify API key.
+export class SiteData extends WorkerEntrypoint<Env> {
+  async listingContent(listingId: number): Promise<Row> {
+    if (!Number.isInteger(listingId) || listingId <= 0) throw new Error("bad listing id");
+    return listingContent(this.env.HOSTIFY_API_KEY, listingId, 20);
+  }
+}
 
 const oauth = new OAuthProvider({
   apiHandler: HostifyMCPV2.serve("/mcp"),
