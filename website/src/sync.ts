@@ -294,6 +294,18 @@ async function enrich(env: Env, rec: string, f: Row) {
 
 export async function runSync(env: Env) {
   await ensureSchema(env.DB);
+  await setState(env.DB, "last_start", String(Date.now()));
+  try {
+    await syncOnce(env);
+    await setState(env.DB, "last_error", "");
+  } catch (e) {
+    // Shown on /healthz so a bad Airtable key or other failure is easy to spot.
+    await setState(env.DB, "last_error", `${new Date().toISOString()} ${String(e).slice(0, 300)}`);
+    throw e;
+  }
+}
+
+async function syncOnce(env: Env) {
   const now = Date.now();
   const lastList = Number((await state(env.DB, "last_list")) || 0);
 
