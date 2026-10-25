@@ -1,5 +1,4 @@
 import OAuthProvider from "@cloudflare/workers-oauth-provider";
-import { WorkerEntrypoint } from "cloudflare:workers";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { McpAgent } from "agents/mcp";
 import { z } from "zod";
@@ -13,6 +12,7 @@ import {
 } from "./queries";
 import { ensureSchema } from "./schema";
 import { freshness, runSync, syncStatus } from "./sync";
+import { executePending, previewCreateReservation, recentWrites, writesEnabled } from "./writes";
 
 interface Env {
   HOSTIFY_API_KEY: string;
@@ -23,6 +23,7 @@ interface Env {
   MCP_OBJECT: DurableObjectNamespace;
   DB: D1Database;
   SYNC_PAGES_PER_RUN?: string;
+  WRITES_ENABLED?: string;
 }
 
 type Props = { login: string; name: string; email: string; accessToken: string };
@@ -63,7 +64,7 @@ const INSTRUCTIONS = [
 ].join(" ");
 
 export class HostifyMCPV2 extends McpAgent<Env, Record<string, never>, Props> {
-  server = new McpServer({ name: "Home to Host – Hostify", version: "3.0.0" }, { instructions: INSTRUCTIONS });
+  server = new McpServer({ name: "Home to Host – Hostify", version: "3.1.0" }, { instructions: INSTRUCTIONS });
 
   async init() {
     const db = () => this.env.DB;
@@ -235,7 +236,41 @@ export class HostifyMCPV2 extends McpAgent<Env, Record<string, never>, Props> {
       { listing_id: z.number().int().positive(), max_photos: z.number().int().min(1).max(100).default(40) },
       async ({ listing_id, max_photos }) => {
         try {
-          return result(await listingContent(this.env.HOSTIFY_API_KEY, listing_id, max_photos, true));
+          const apiKey = this.env.HOSTIFY_API_KEY;
+          const body = await hostifyGet(apiKey, `/listings/${listing_id}`, { include_related_objects: 1 }) as Row;
+          const listing = (body.listing && typeof body.listing === "object" ? body.listing : body) as Row;
+          const sources: Row[] = [listing, body];
+          const tried = [`/listings/${listing_id}?include_related_objects=1`];
+
+          // Some accounts serve photos from their own endpoint; try those only if needed.
+          if (!extractPhotos(sources).length) {
+            for (const [path, params] of [
+              [`/listings/${listing_id}/photos`, {}],
+              ["/photos", { listing_id }],
+            ] as [string, Row][]) {
+              tried.push(path);
+              try {
+                const extra = await hostifyGet(apiKey, path, params);
+                const items = extractItems(extra, ["photos", "images"]);
+                if (items.length) { sources.push({ photos: items }); break; }
+              } catch { /* endpoint not available on this account */ }
+            }
+          }
+
+          const photos = extractPhotos(sources);
+          const description = extractDescription(sources);
+          const out: Row = {
+            listing: mapListing(listing),
+            photo_count: photos.length,
+            photos: photos.slice(0, max_photos),
+            description,
+            amenities: extractAmenities(sources),
+            source: "live",
+          };
+          if (!photos.length || !Object.keys(description).length) {
+            out.diagnostics = { endpoints_tried: tried, response_keys: keyOutline(sources.slice(0, 2)) };
+          }
+          return result(out);
         } catch (e) { return failure(e); }
       },
     );
@@ -276,59 +311,68 @@ export class HostifyMCPV2 extends McpAgent<Env, Record<string, never>, Props> {
         } catch (e) { return failure(e); }
       },
     );
+
+    // ---------------- writes (preview → confirm) ----------------
+
+    const writesOff = () => failure("Write actions are switched off (WRITES_ENABLED is not 'true').");
+    const who = () => this.props?.login ?? "unknown";
+
+    this.server.tool(
+      "create_reservation",
+      "WRITE – step 1 of 2. Prepares a new reservation (direct / corporate booking) on a Hostify listing and returns a preview: " +
+      "resolved property, nights, availability check, clashes with existing bookings, and the exact request. NOTHING is created yet. " +
+      "Show the preview to the user; only if they say yes, call confirm_write with confirm_token.",
+      {
+        property: z.string().min(1).describe("Listing id, or nickname/street/postcode. If several match you get candidates back."),
+        check_in: date,
+        check_out: date.describe("Departure date, YYYY-MM-DD"),
+        guest_name: z.string().min(2).max(120),
+        guests: z.number().int().min(1).max(30).default(1),
+        total_price: z.number().min(0).optional().describe("Total stay price the guest pays"),
+        currency: z.string().length(3).optional().describe("e.g. GBP"),
+        source: z.string().min(2).max(40).default("direct").describe("Booking source/channel, e.g. direct, ICAB, corporate"),
+        status: z.enum(["accepted", "pending"]).default("accepted"),
+        guest_email: z.string().email().optional(),
+        guest_phone: z.string().min(5).max(30).optional(),
+        note: z.string().max(1000).optional().describe("Internal note on the booking"),
+        extra_fields: z.record(z.union([z.string(), z.number(), z.boolean()])).optional()
+          .describe("Advanced: extra Hostify fields to include as-is"),
+      },
+      async (args) => {
+        if (!writesEnabled(this.env)) return writesOff();
+        try { return result(await previewCreateReservation(this.env, args, who())); } catch (e) { return failure(e); }
+      },
+    );
+
+    this.server.tool(
+      "confirm_write",
+      "WRITE – step 2 of 2. Sends a previewed change to Hostify. Only call after the user has seen the preview and explicitly said yes. " +
+      "Each token works once and expires after 15 minutes.",
+      { confirm_token: z.string().min(6).max(40) },
+      async ({ confirm_token }) => {
+        if (!writesEnabled(this.env)) return writesOff();
+        try {
+          const out = await executePending(this.env, confirm_token, who());
+          // Pull the new booking into the cache soon after.
+          this.ctx.waitUntil(runSync(this.env, 2).catch(() => undefined));
+          return result(out);
+        } catch (e) { return failure(e); }
+      },
+    );
+
+    this.server.tool(
+      "write_log",
+      "Recent changes sent to Hostify through this connector (who, when, what, result).",
+      { limit: z.number().int().min(1).max(50).default(10) },
+      async ({ limit }) => {
+        try { return result({ writes: await recentWrites(this.env.DB, limit) }); } catch (e) { return failure(e); }
+      },
+    );
   }
 }
 
 // Kept so the existing Durable Object migration still resolves.
 export class HostifyMCP extends HostifyMCPV2 {}
-
-// Public, guest-facing content of one listing (photos, description sections, amenities, basic facts).
-async function listingContent(apiKey: string, listingId: number, maxPhotos: number, withDiagnostics = false): Promise<Row> {
-  const body = await hostifyGet(apiKey, `/listings/${listingId}`, { include_related_objects: 1 }) as Row;
-  const listing = (body.listing && typeof body.listing === "object" ? body.listing : body) as Row;
-  const sources: Row[] = [listing, body];
-  const tried = [`/listings/${listingId}?include_related_objects=1`];
-
-  // Some accounts serve photos from their own endpoint; try those only if needed.
-  if (!extractPhotos(sources).length) {
-    for (const [path, params] of [
-      [`/listings/${listingId}/photos`, {}],
-      ["/photos", { listing_id: listingId }],
-    ] as [string, Row][]) {
-      tried.push(path);
-      try {
-        const extra = await hostifyGet(apiKey, path, params);
-        const items = extractItems(extra, ["photos", "images"]);
-        if (items.length) { sources.push({ photos: items }); break; }
-      } catch { /* endpoint not available on this account */ }
-    }
-  }
-
-  const photos = extractPhotos(sources);
-  const description = extractDescription(sources);
-  const out: Row = {
-    listing: mapListing(listing),
-    photo_count: photos.length,
-    photos: photos.slice(0, maxPhotos),
-    description,
-    amenities: extractAmenities(sources),
-    source: "live",
-  };
-  if (withDiagnostics && (!photos.length || !Object.keys(description).length)) {
-    out.diagnostics = { endpoints_tried: tried, response_keys: keyOutline(sources.slice(0, 2)) };
-  }
-  return out;
-}
-
-// Private entry point for the Home to Host website worker (service binding "HOSTIFY").
-// It is not reachable from the internet: only workers on this account that bind to it can call it,
-// so the website never needs its own Hostify API key.
-export class SiteData extends WorkerEntrypoint<Env> {
-  async listingContent(listingId: number): Promise<Row> {
-    if (!Number.isInteger(listingId) || listingId <= 0) throw new Error("bad listing id");
-    return listingContent(this.env.HOSTIFY_API_KEY, listingId, 20);
-  }
-}
 
 const oauth = new OAuthProvider({
   apiHandler: HostifyMCPV2.serve("/mcp"),

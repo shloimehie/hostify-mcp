@@ -113,6 +113,21 @@ SCHEMA.push(
   // 18 Oct 2026: the account had already used ~88% of the day's cap before
   // this counter existed, so start that day near the limit.
   `INSERT OR IGNORE INTO h_daily_writes (day, rows_written) VALUES ('2026-10-18', 90000)`,
+  // Write actions: previews awaiting confirmation, and the audit log of sent ones.
+  `CREATE TABLE IF NOT EXISTS h_pending_writes (
+    token TEXT PRIMARY KEY,
+    action TEXT NOT NULL,
+    method TEXT NOT NULL,
+    path TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    created_by TEXT,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    confirmed_at TEXT,
+    confirmed_by TEXT,
+    result TEXT
+  )`,
 );
 
 let applied = false;
