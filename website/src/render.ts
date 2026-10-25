@@ -1,4 +1,4 @@
-import { LOGO_ICON } from "./logo";
+import { LOGO_ICON, LOGO_STACKED } from "./logo";
 // HTML for hometohost.com: collection page, one page per home, enquiry page.
 
 export interface Home {
@@ -114,7 +114,7 @@ ${opts.image ? `<meta property="og:image" content="${esc(opts.image)}">` : ""}<m
 <header class="mast gutter"><div class="wrap"><a class="brand" href="/" aria-label="Home to Host, home page">${LOGO_ICON}<span class="brand-t"><b>HOME TO HOST</b><span>PRIVATE STAYS · LONDON &amp; UK</span></span></a>
 <nav class="top" aria-label="Main"><a href="/#homes">Our homes</a><a href="/#corporate">Corporate stays</a><a href="/#how">How it works</a><a class="btn btn-gold" href="/enquire">Enquire</a></nav></div></header>
 <main>${opts.body}</main>
-<footer class="gutter"><div class="wrap"><div class="f-top"><div style="max-width:320px;display:flex;flex-direction:column;gap:16px"><span class="brand f-brand">${LOGO_ICON}<span class="brand-t"><b>HOME TO HOST</b><span>PRIVATE STAYS · LONDON &amp; UK</span></span></span>Private homes and personally hosted stays across London and the UK.</div>
+<footer class="gutter"><div class="wrap"><div class="f-top"><div style="max-width:320px;display:flex;flex-direction:column;gap:16px"><span class="f-logo">${LOGO_STACKED}</span>Private homes and personally hosted stays across London and the UK.</div>
 <div class="f-cols"><div><small>Stays</small><a href="/#homes">Our homes</a><a href="/#corporate">Corporate stays</a><a href="/enquire">Enquire</a></div>
 <div><small>Contact</small><a href="tel:+442034882323">020 3488 2323</a><a href="mailto:info@hometohost.com">info@hometohost.com</a><span>Out of hours: 07588 098809</span></div></div></div>
 <div class="f-base"><span>© ${new Date().getFullYear()} Home to Host Ltd · Company no. 12184608</span><span>hometohost.com</span></div></div></footer>
