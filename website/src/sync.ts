@@ -258,7 +258,7 @@ async function enrich(env: Env, rec: string, f: Row) {
 
   const oc = outcodeOf(address) || outcodeOf(zip);
   const { area, place } = placeFor(f, oc);
-  const name = s(f[F.webName]) || streetOf(address, s(f[F.name]));
+  const name = (s(f[F.webName]) || streetOf(address, s(f[F.name]))).replace(/[\s\-–·,]+$/, "").trim() || "Home";
   const typ = arr(f[F.type])[0]?.trim() || "";
 
   // Text: Airtable's website fields first, then Hostify's listing, then a plain factual line.
