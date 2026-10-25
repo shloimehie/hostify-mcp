@@ -44,6 +44,20 @@ nav.top .btn-gold,.btn-gold{background:var(--gold);color:var(--navy)}.btn-gold:h
 .hero{background:var(--navy);color:var(--on-navy)}.hero .wrap{padding-block:0 72px}.hero-frame{position:relative;min-height:540px;display:flex;align-items:flex-end;overflow:hidden}
 .hero-frame>img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.hero-frame::before{content:"";position:absolute;inset:0;z-index:1;background:linear-gradient(90deg,rgba(14,26,43,.68) 0%,rgba(14,26,43,0) 65%),linear-gradient(180deg,rgba(14,26,43,0) 30%,rgba(14,26,43,.85) 100%)}
 .hero-copy{position:relative;z-index:2;padding:56px clamp(20px,5vw,64px);max-width:800px;display:flex;flex-direction:column;gap:18px}.hero-copy h1{font-size:clamp(42px,6.2vw,78px)}.hero-copy p{margin:0;font-size:16.5px;font-weight:300;color:#E6E1D6;max-width:34em}
+.hero2{position:relative;height:100vh;height:100svh;min-height:620px;max-height:1100px;overflow:hidden;background:var(--navy);color:var(--on-navy)}
+.hero2 .slide{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity 1.8s ease;transform:scale(1.02)}
+.hero2 .slide.on{opacity:1;animation:hth-zoom 9s ease-out forwards}
+@keyframes hth-zoom{from{transform:scale(1.02) translate3d(0,0,0)}to{transform:scale(1.14) translate3d(-1.5%,-1%,0)}}
+.hero2::before{content:"";position:absolute;inset:0;z-index:1;background:linear-gradient(180deg,rgba(14,26,43,.55) 0%,rgba(14,26,43,0) 26%),linear-gradient(90deg,rgba(14,26,43,.62) 0%,rgba(14,26,43,.1) 60%),linear-gradient(180deg,rgba(14,26,43,0) 45%,rgba(14,26,43,.78) 100%)}
+.hero2 .hero-copy{position:absolute;z-index:2;left:0;right:0;bottom:96px;margin:0 auto;max-width:var(--wrap);padding:0 max(16px,env(safe-area-inset-left,0px))}
+.hero2 .hero-copy{text-shadow:0 2px 20px rgba(8,14,28,.5)}.hero2 .eyebrow{color:#DCC08F}.hero2 .hero-copy>*{max-width:760px}.hero2 h1{font-size:clamp(44px,7vw,92px)}.hero2 p{margin:0;font-size:17px;font-weight:300;color:#EAE5DA;max-width:34em}
+.hero2 .dots{position:absolute;z-index:2;right:max(16px,calc((100vw - var(--wrap))/2));bottom:104px;display:flex;gap:10px}
+.hero2 .dots button{width:28px;height:2px;padding:0;border:0;background:rgba(245,242,236,.4);cursor:pointer}.hero2 .dots button[aria-current=true]{background:var(--gold)}
+.search-wrap{position:relative;z-index:3;margin-top:-48px}.search-wrap .search{margin:0}
+body.home header.mast{position:fixed;left:0;right:0;background:transparent;transition:background .35s ease,box-shadow .35s ease}
+body.home header.mast.solid{background:var(--navy);box-shadow:0 6px 24px rgba(8,14,28,.25)}
+@media (prefers-reduced-motion:reduce){.hero2 .slide.on{animation:none}.hero2 .slide{transition:none}}
+@media (max-width:700px){.hero2 .hero-copy{bottom:84px}.hero2 .dots{display:none}}
 .search{background:var(--paper);color:var(--ink);display:flex;flex-wrap:wrap;margin:-40px clamp(0px,3vw,40px) 0;position:relative;z-index:3;box-shadow:0 24px 60px rgba(8,14,28,.28)}
 .search label{flex:1 1 170px;padding:15px 20px;display:flex;flex-direction:column;gap:4px;font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
 .search select,.search input{border:0;background:transparent;font-size:15px;letter-spacing:0;text-transform:none;padding:4px 0;color:var(--ink);min-width:0}
@@ -78,14 +92,14 @@ footer{background:var(--navy);color:var(--on-navy-muted);font-size:13px}footer .
 
 const CHECK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A6A35" stroke-width="2" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5"/></svg>';
 
-export function page(opts: { title: string; description: string; canonical: string; body: string; image?: string; script?: string }) {
+export function page(opts: { title: string; description: string; canonical: string; body: string; image?: string; script?: string; bodyClass?: string }) {
   return `<!doctype html><html lang="en-GB"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>${esc(opts.title)}</title><meta name="description" content="${esc(opts.description)}"><link rel="canonical" href="${esc(opts.canonical)}">
 <meta property="og:title" content="${esc(opts.title)}"><meta property="og:description" content="${esc(opts.description)}"><meta property="og:type" content="website">
 ${opts.image ? `<meta property="og:image" content="${esc(opts.image)}">` : ""}<meta name="theme-color" content="#0E1A2B">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Montserrat:wght@300;400;500;600&display=swap">
-<style>${CSS}</style></head><body>
+<style>${CSS}</style></head><body${opts.bodyClass ? ` class="${opts.bodyClass}"` : ""}>
 <header class="mast gutter"><div class="wrap"><a class="brand" href="/"><b>HOME TO HOST</b><span>PRIVATE STAYS · LONDON &amp; UK</span></a>
 <nav class="top" aria-label="Main"><a href="/#homes">Our homes</a><a href="/#corporate">Corporate stays</a><a href="/#how">How it works</a><a class="btn btn-gold" href="/enquire">Enquire</a></nav></div></header>
 <main>${opts.body}</main>
@@ -98,16 +112,35 @@ ${opts.script ? `<script>${opts.script}</script>` : ""}</body></html>`;
 
 // ---------- collection page ----------
 
+const HERO = [
+  { src: "/hero/1.jpg", alt: "A bright open-plan living room with floor-to-ceiling windows and a beamed wooden ceiling" },
+  { src: "/hero/2.jpg", alt: "An open-plan kitchen and dining room opening onto a landscaped garden" },
+  { src: "/hero/3.jpg", alt: "A period living room with a leather sofa and tall bay windows" },
+  { src: "/hero/4.jpg", alt: "A covered swimming pool set in a large garden" },
+  { src: "/hero/5.jpg", alt: "A seafront garden with loungers at sunset" },
+];
+
+// Crossfading, slowly zooming photos at the top of the home page; header turns solid on scroll.
+const HERO_JS = `(()=>{const hdr=document.querySelector("header.mast"),hero=document.getElementById("hero");const solid=()=>hdr.classList.toggle("solid",scrollY>40);addEventListener("scroll",solid,{passive:true});solid();
+const S=[...hero.querySelectorAll(".slide")],D=[...hero.querySelectorAll(".dots button")];let i=0,t;
+addEventListener("load",()=>S.forEach(s=>{if(s.dataset.src){s.src=s.dataset.src}}));
+const show=n=>{if(!S[n].complete||!S[n].src)return;S[i].classList.remove("on");D[i].removeAttribute("aria-current");i=n;void S[i].offsetWidth;S[i].classList.add("on");D[i].setAttribute("aria-current","true")};
+const go=()=>{clearInterval(t);t=setInterval(()=>show((i+1)%S.length),6500)};
+D.forEach(b=>b.addEventListener("click",()=>{show(+b.dataset.i);go()}));
+if(!matchMedia("(prefers-reduced-motion: reduce)").matches)go()})();`;
+
 export function homePage(homes: Home[], site: string) {
   const data = homes.map((h) => ({
     s: h.slug, n: h.name, a: h.area, w: where(h), o: h.outcode, b: h.beds, ba: h.baths, sl: h.sleeps, t: h.type,
     c: h.photos[0] ? photoUrl(h.photos[0], 800) : "",
   }));
   const body = `
-<div class="hero gutter on-dark"><div class="wrap"><div class="hero-frame"><img src="/hero.jpg" alt="A bright open-plan living room with floor-to-ceiling windows and a beamed wooden ceiling" fetchpriority="high">
+<div class="hero2 on-dark" id="hero">
+${HERO.map((x, i) => `<img class="slide${i === 0 ? " on" : ""}" ${i === 0 ? `src="${x.src}" fetchpriority="high"` : `data-src="${x.src}"`} alt="${esc(x.alt)}"${i === 0 ? "" : ' aria-hidden="true"'}>`).join("")}
 <div class="hero-copy"><span class="eyebrow">London &amp; across the UK</span><h1>Homes across London, and further afield.</h1>
-<p>Apartments, townhouses and grand houses by the sea, each prepared and looked after by our own team. Tell us your dates and we'll come back with the homes that fit.</p></div></div>
-<form class="search" id="filters" aria-label="Filter homes" onsubmit="return false">
+<p>Apartments, townhouses and grand houses by the sea, each prepared and looked after by our own team. Tell us your dates and we'll come back with the homes that fit.</p></div>
+<div class="dots" aria-label="Photos">${HERO.map((_, i) => `<button type="button" data-i="${i}" aria-label="Photo ${i + 1}"${i === 0 ? ' aria-current="true"' : ""}></button>`).join("")}</div></div>
+<div class="search-wrap gutter"><div class="wrap"><form class="search" id="filters" aria-label="Filter homes" onsubmit="return false">
 <label for="f-q">Search<input id="f-q" type="search" placeholder="Street, area or postcode" autocomplete="off"></label>
 <label for="f-beds">Bedrooms<select id="f-beds"><option value="0">Any</option><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option><option value="4">4+</option><option value="5">5+</option><option value="6">6+</option></select></label>
 <label for="f-guests">Guests<select id="f-guests"><option value="0">Any</option><option value="2">2+</option><option value="4">4+</option><option value="6">6+</option><option value="8">8+</option><option value="10">10+</option><option value="12">12+</option></select></label>
@@ -125,7 +158,7 @@ export function homePage(homes: Home[], site: string) {
 <p>Relocations, project teams, insurance placements and long stays. One contact for your booking team, homes prepared to the same standard every time, and straightforward invoicing.</p>
 <a class="btn btn-gold" href="/enquire?type=corporate">Corporate enquiry</a></div>
 <div class="stats"><div><b>1,000+</b><span>homes across the UK</span></div><div><b>24/7</b><span>guest support line</span></div><div><b>700+</b><span>homes in London</span></div><div><b>Pets</b><span>welcome in our homes</span></div></div></div></section>`;
-  const script = `const H=${JSON.stringify(data).replace(/</g, "\\u003c")};const PAGE=24;let shown=PAGE,area="All";const $=i=>document.getElementById(i);
+  const script = HERO_JS + `const H=${JSON.stringify(data).replace(/</g, "\\u003c")};const PAGE=24;let shown=PAGE,area="All";const $=i=>document.getElementById(i);
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));const half=x=>String(Math.round(x*2)/2);
 const facts=h=>[h.b!=null?"<span>"+(h.b===0?"Studio":half(h.b)+" bedroom"+(h.b===1?"":"s"))+"</span>":"",h.ba?"<span>"+half(h.ba)+" bath"+(h.ba===1?"":"s")+"</span>":"",h.sl?"<span>Sleeps "+h.sl+"</span>":""].join("");
 const AREAS=["North","East","South","West","Central","Outside London"];
@@ -138,7 +171,7 @@ $("more-btn").addEventListener("click",()=>{shown+=PAGE;grid()});chips();grid();
   return page({
     title: "Home to Host · Private homes in London and across the UK",
     description: `Over 1,000 private homes in London and across the UK, from apartments to large family houses. Enquire for a personal shortlist and rate.`,
-    canonical: site + "/", image: site + "/hero.jpg", body, script,
+    canonical: site + "/", image: site + "/hero.jpg", body, script, bodyClass: "home",
   });
 }
 
