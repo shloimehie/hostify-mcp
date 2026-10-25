@@ -1,4 +1,4 @@
-import { LOGO_H, LOGO_STACKED } from "./logo";
+import { LOGO_ICON } from "./logo";
 // HTML for hometohost.com: collection page, one page per home, enquiry page.
 
 export interface Home {
@@ -36,7 +36,7 @@ a{color:inherit}img{max-width:100%;display:block}button,input,select,textarea{fo
 h1,h2,h3{font-family:var(--display);font-weight:400;margin:0;text-wrap:balance;line-height:1.08}
 header.mast{background:var(--navy);color:var(--on-navy);position:sticky;top:0;z-index:5}
 header.mast .wrap{padding-block:16px;display:flex;flex-wrap:wrap;gap:12px 28px;align-items:center;justify-content:space-between}
-.brand{text-decoration:none;display:flex;flex-direction:column;gap:1px}.brand b{font-family:var(--display);font-weight:500;font-size:26px;letter-spacing:.2em}.brand span{font-size:9.5px;letter-spacing:.42em;color:var(--gold)}
+.brand{text-decoration:none;display:flex;flex-direction:column;gap:1px}.brand b{font-family:var(--display);font-weight:500;font-size:26px;letter-spacing:.2em}.brand-t>span{font-size:9.5px;letter-spacing:.42em;color:var(--gold)}
 nav.top{display:flex;flex-wrap:wrap;gap:6px 26px;align-items:center;font-size:12.5px;letter-spacing:.06em}nav.top a{text-decoration:none;color:var(--on-navy-muted)}nav.top a:hover{color:var(--on-navy)}
 .btn{display:inline-flex;align-items:center;justify-content:center;min-height:46px;padding:0 24px;border:0;cursor:pointer;text-decoration:none;font-size:11.5px;letter-spacing:.2em;font-weight:600;text-transform:uppercase}
 nav.top .btn-gold,.btn-gold{background:var(--gold);color:var(--navy)}.btn-gold:hover{background:#D1B27F}.btn-navy{background:var(--navy);color:var(--on-navy)}.btn-navy:hover{background:var(--navy-2)}
@@ -68,7 +68,7 @@ body.home header.mast.solid{background:var(--navy);box-shadow:0 6px 24px rgba(8,
 .pop-text{padding-top:72px}@media (max-width:760px){.pop-img{display:none}}
 .band-cta{grid-column:1/-1;background:var(--navy);color:var(--on-navy);padding:clamp(36px,5vw,60px) 24px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px}
 .band-cta h3{font-size:clamp(28px,3.4vw,42px);max-width:22em}.band-cta p{margin:0 0 8px;color:var(--gold);font-size:16px}
-.brand{color:var(--on-navy);display:block}.brand .logo-h{display:block;height:44px;width:auto}@media (max-width:700px){.brand .logo-h{height:36px}}.f-logo{color:var(--on-navy);display:block;width:170px}.f-logo svg{display:block;width:100%;height:auto}
+.brand{color:var(--on-navy);display:flex;align-items:center;gap:14px;flex-direction:row}.brand .logo-i{display:block;height:46px;width:auto;flex:0 0 auto}.brand-t{display:flex;flex-direction:column;gap:1px}@media (max-width:700px){.brand .logo-i{height:38px}}.f-logo{color:var(--on-navy);display:block;width:170px}.f-logo svg{display:block;width:100%;height:auto}
 .search{background:var(--paper);color:var(--ink);display:flex;flex-wrap:wrap;margin:-40px clamp(0px,3vw,40px) 0;position:relative;z-index:3;box-shadow:0 24px 60px rgba(8,14,28,.28)}
 .search label{flex:1 1 170px;padding:15px 20px;display:flex;flex-direction:column;gap:4px;font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
 .search select,.search input{border:0;background:transparent;font-size:15px;letter-spacing:0;text-transform:none;padding:4px 0;color:var(--ink);min-width:0}
@@ -111,10 +111,10 @@ ${opts.image ? `<meta property="og:image" content="${esc(opts.image)}">` : ""}<m
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Montserrat:wght@300;400;500;600&display=swap">
 <style>${CSS}</style></head><body${opts.bodyClass ? ` class="${opts.bodyClass}"` : ""}>
-<header class="mast gutter"><div class="wrap"><a class="brand" href="/" aria-label="Home to Host, home page">${LOGO_H}</a>
+<header class="mast gutter"><div class="wrap"><a class="brand" href="/" aria-label="Home to Host, home page">${LOGO_ICON}<span class="brand-t"><b>HOME TO HOST</b><span>PRIVATE STAYS · LONDON &amp; UK</span></span></a>
 <nav class="top" aria-label="Main"><a href="/#homes">Our homes</a><a href="/#corporate">Corporate stays</a><a href="/#how">How it works</a><a class="btn btn-gold" href="/enquire">Enquire</a></nav></div></header>
 <main>${opts.body}</main>
-<footer class="gutter"><div class="wrap"><div class="f-top"><div style="max-width:320px;display:flex;flex-direction:column;gap:16px"><span class="f-logo">${LOGO_STACKED}</span>Private homes and personally hosted stays across London and the UK.</div>
+<footer class="gutter"><div class="wrap"><div class="f-top"><div style="max-width:320px;display:flex;flex-direction:column;gap:16px"><span class="brand f-brand">${LOGO_ICON}<span class="brand-t"><b>HOME TO HOST</b><span>PRIVATE STAYS · LONDON &amp; UK</span></span></span>Private homes and personally hosted stays across London and the UK.</div>
 <div class="f-cols"><div><small>Stays</small><a href="/#homes">Our homes</a><a href="/#corporate">Corporate stays</a><a href="/enquire">Enquire</a></div>
 <div><small>Contact</small><a href="tel:+442034882323">020 3488 2323</a><a href="mailto:info@hometohost.com">info@hometohost.com</a><span>Out of hours: 07588 098809</span></div></div></div>
 <div class="f-base"><span>© ${new Date().getFullYear()} Home to Host Ltd · Company no. 12184608</span><span>hometohost.com</span></div></div></footer>
