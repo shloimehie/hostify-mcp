@@ -1,3 +1,4 @@
+import { LOGO_H, LOGO_STACKED } from "./logo";
 // HTML for hometohost.com: collection page, one page per home, enquiry page.
 
 export interface Home {
@@ -58,6 +59,16 @@ body.home header.mast{position:fixed;left:0;right:0;background:transparent;trans
 body.home header.mast.solid{background:var(--navy);box-shadow:0 6px 24px rgba(8,14,28,.25)}
 @media (prefers-reduced-motion:reduce){.hero2 .slide.on{animation:none}.hero2 .slide{transition:none}}
 @media (max-width:700px){.hero2 .hero-copy{bottom:84px}.hero2 .dots{display:none}}
+.pop{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(8,14,28,.55);opacity:0;transition:opacity .35s ease}
+.pop.open{opacity:1}.pop-card{position:relative;display:flex;width:min(880px,100%);max-height:calc(100vh - 32px);overflow:auto;background:var(--paper);color:var(--ink);box-shadow:0 30px 80px rgba(8,14,28,.4);transform:translateY(14px);transition:transform .35s ease}
+.pop.open .pop-card{transform:none}.pop-text{flex:1 1 380px;padding:clamp(28px,5vw,56px);display:flex;flex-direction:column;gap:18px}
+.pop-text h2{font-size:clamp(30px,3.6vw,40px);padding-bottom:18px;border-bottom:1px solid var(--gold)}.pop-text p{margin:0;font-size:14.5px;color:#333A45}
+.pop-btns{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px}.pop-img{flex:1 1 400px;min-height:440px;background:var(--navy-3) center/cover no-repeat}
+.pop-x{position:absolute;top:14px;left:14px;width:40px;height:40px;border:0;background:transparent;cursor:pointer;font-size:28px;line-height:1;color:var(--ink)}
+.pop-text{padding-top:72px}@media (max-width:760px){.pop-img{display:none}}
+.band-cta{grid-column:1/-1;background:var(--navy);color:var(--on-navy);padding:clamp(36px,5vw,60px) 24px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px}
+.band-cta h3{font-size:clamp(28px,3.4vw,42px);max-width:22em}.band-cta p{margin:0 0 8px;color:var(--gold);font-size:16px}
+.brand{color:var(--on-navy);display:block}.brand .logo-h{display:block;height:44px;width:auto}@media (max-width:700px){.brand .logo-h{height:36px}}.f-logo{color:var(--on-navy);display:block;width:170px}.f-logo svg{display:block;width:100%;height:auto}
 .search{background:var(--paper);color:var(--ink);display:flex;flex-wrap:wrap;margin:-40px clamp(0px,3vw,40px) 0;position:relative;z-index:3;box-shadow:0 24px 60px rgba(8,14,28,.28)}
 .search label{flex:1 1 170px;padding:15px 20px;display:flex;flex-direction:column;gap:4px;font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
 .search select,.search input{border:0;background:transparent;font-size:15px;letter-spacing:0;text-transform:none;padding:4px 0;color:var(--ink);min-width:0}
@@ -92,23 +103,45 @@ footer{background:var(--navy);color:var(--on-navy-muted);font-size:13px}footer .
 
 const CHECK = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8A6A35" stroke-width="2" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5"/></svg>';
 
-export function page(opts: { title: string; description: string; canonical: string; body: string; image?: string; script?: string; bodyClass?: string }) {
+export function page(opts: { title: string; description: string; canonical: string; body: string; image?: string; script?: string; bodyClass?: string; popup?: boolean }) {
   return `<!doctype html><html lang="en-GB"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>${esc(opts.title)}</title><meta name="description" content="${esc(opts.description)}"><link rel="canonical" href="${esc(opts.canonical)}">
 <meta property="og:title" content="${esc(opts.title)}"><meta property="og:description" content="${esc(opts.description)}"><meta property="og:type" content="website">
-${opts.image ? `<meta property="og:image" content="${esc(opts.image)}">` : ""}<meta name="theme-color" content="#0E1A2B">
+${opts.image ? `<meta property="og:image" content="${esc(opts.image)}">` : ""}<meta name="theme-color" content="#0E1A2B"><link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Montserrat:wght@300;400;500;600&display=swap">
 <style>${CSS}</style></head><body${opts.bodyClass ? ` class="${opts.bodyClass}"` : ""}>
-<header class="mast gutter"><div class="wrap"><a class="brand" href="/"><b>HOME TO HOST</b><span>PRIVATE STAYS · LONDON &amp; UK</span></a>
+<header class="mast gutter"><div class="wrap"><a class="brand" href="/" aria-label="Home to Host, home page">${LOGO_H}</a>
 <nav class="top" aria-label="Main"><a href="/#homes">Our homes</a><a href="/#corporate">Corporate stays</a><a href="/#how">How it works</a><a class="btn btn-gold" href="/enquire">Enquire</a></nav></div></header>
 <main>${opts.body}</main>
-<footer class="gutter"><div class="wrap"><div class="f-top"><div style="max-width:320px"><b>HOME TO HOST</b>Private homes and personally hosted stays across London and the UK.</div>
+<footer class="gutter"><div class="wrap"><div class="f-top"><div style="max-width:320px;display:flex;flex-direction:column;gap:16px"><span class="f-logo">${LOGO_STACKED}</span>Private homes and personally hosted stays across London and the UK.</div>
 <div class="f-cols"><div><small>Stays</small><a href="/#homes">Our homes</a><a href="/#corporate">Corporate stays</a><a href="/enquire">Enquire</a></div>
 <div><small>Contact</small><a href="tel:+442034882323">020 3488 2323</a><a href="mailto:info@hometohost.com">info@hometohost.com</a><span>Out of hours: 07588 098809</span></div></div></div>
 <div class="f-base"><span>© ${new Date().getFullYear()} Home to Host Ltd · Company no. 12184608</span><span>hometohost.com</span></div></div></footer>
+${opts.popup === false ? "" : POPUP}
 ${opts.script ? `<script>${opts.script}</script>` : ""}</body></html>`;
 }
+
+// ---------- enquiry pop-up (shown once, after a visitor has scrolled for a while) ----------
+
+const POPUP = `<div class="pop" id="pop" role="dialog" aria-modal="true" aria-labelledby="pop-title" hidden>
+<div class="pop-card"><button class="pop-x" type="button" aria-label="Close" data-close>&times;</button>
+<div class="pop-text"><h2 id="pop-title">Planning a stay in London or further afield?</h2>
+<p>From apartments in the heart of the city to family houses with gardens and homes by the sea, our team will find the one that fits your dates, your group and the way you like to stay.</p>
+<p>Looking to let your home instead? Speak to our team about having it looked after by Home to Host.</p>
+<div class="pop-btns"><a class="btn btn-navy" href="/enquire?type=stay">Find your stay</a><a class="btn btn-line" href="/enquire?type=owner">List your home</a></div></div>
+<div class="pop-img" style="background-image:url(/hero/3.jpg)" role="img" aria-label="A period living room with tall bay windows"></div></div></div>
+<script>(()=>{const K="hth-pop",el=document.getElementById("pop");let seen=0;try{seen=+localStorage.getItem(K)||0;if(sessionStorage.getItem(K))seen=Date.now()}catch(e){}
+if(Date.now()-seen<7*864e5)return;let shown=false,last=null;
+const open=()=>{if(shown)return;shown=true;try{localStorage.setItem(K,String(Date.now()));sessionStorage.setItem(K,"1")}catch(e){}
+last=document.activeElement;el.hidden=false;requestAnimationFrame(()=>el.classList.add("open"));el.querySelector(".pop-x").focus();cleanup()};
+const close=()=>{el.classList.remove("open");setTimeout(()=>{el.hidden=true},350);last&&last.focus&&last.focus()};
+el.addEventListener("click",e=>{if(e.target===el||e.target.closest("[data-close]"))close()});
+addEventListener("keydown",e=>{if(e.key==="Escape"&&!el.hidden)close()});
+const onScroll=()=>{const h=document.documentElement;if(scrollY>Math.min(1400,(h.scrollHeight-innerHeight)*.4))open()};
+const onLeave=e=>{if(e.clientY<=0)open()};const timer=setTimeout(open,40000);
+const cleanup=()=>{removeEventListener("scroll",onScroll);document.removeEventListener("mouseout",onLeave);clearTimeout(timer)};
+setTimeout(()=>{addEventListener("scroll",onScroll,{passive:true});document.addEventListener("mouseout",onLeave)},8000)})();</script>`;
 
 // ---------- collection page ----------
 
@@ -161,13 +194,14 @@ ${HERO.map((x, i) => `<img class="slide${i === 0 ? " on" : ""}" ${i === 0 ? `src
   const script = HERO_JS + `const H=${JSON.stringify(data).replace(/</g, "\\u003c")};const PAGE=24;let shown=PAGE,area="All";const $=i=>document.getElementById(i);
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));const half=x=>String(Math.round(x*2)/2);
 const facts=h=>[h.b!=null?"<span>"+(h.b===0?"Studio":half(h.b)+" bedroom"+(h.b===1?"":"s"))+"</span>":"",h.ba?"<span>"+half(h.ba)+" bath"+(h.ba===1?"":"s")+"</span>":"",h.sl?"<span>Sleeps "+h.sl+"</span>":""].join("");
+const BAND='<div class="band-cta"><h3>Short on time, booking for a team, or need something specific?</h3><p>Tell us what you\\'re looking for and we\\'ll do the rest.</p><a class="btn btn-gold" href="/enquire">Tell us what you need</a></div>';
 const AREAS=["North","East","South","West","Central","Outside London"];
 function list(){const q=$("f-q").value.trim().toLowerCase(),b=+$("f-beds").value,g=+$("f-guests").value;return H.filter(h=>(area==="All"||h.a===area)&&(!b||(h.b||0)>=b)&&(!g||(h.sl||0)>=g)&&(!q||(h.n+" "+h.w+" "+h.o+" "+(h.t||"")).toLowerCase().includes(q)))}
 function chips(){$("chips").innerHTML=[["All",H.length],...AREAS.map(a=>[a,H.filter(h=>h.a===a).length])].filter(x=>x[1]).map(([k,c])=>'<button type="button" data-a="'+k+'" aria-pressed="'+(k===area)+'">'+(k==="All"||k==="Outside London"?k:k+" London")+"</button>").join("")}
-function grid(){const l=list();$("grid").innerHTML=l.slice(0,shown).map((h,i)=>'<a class="card" href="/homes/'+esc(h.s)+'"><div class="ph">'+(h.c?'<img src="'+esc(h.c)+'" alt="'+esc(h.n)+'" loading="'+(i<6?"eager":"lazy")+'" decoding="async">':"")+'</div><div class="card-body"><span class="area">'+esc(h.w)+(h.o?" · "+esc(h.o):"")+"</span><h3>"+esc(h.n)+'</h3><div class="facts">'+facts(h)+"</div></div></a>").join("");
+function grid(){const l=list(),cols=getComputedStyle($("grid")).gridTemplateColumns.split(" ").length||3,bandAt=cols*2;$("grid").innerHTML=l.slice(0,shown).map((h,i)=>'<a class="card" href="/homes/'+esc(h.s)+'"><div class="ph">'+(h.c?'<img src="'+esc(h.c)+'" alt="'+esc(h.n)+'" loading="'+(i<6?"eager":"lazy")+'" decoding="async">':"")+'</div><div class="card-body"><span class="area">'+esc(h.w)+(h.o?" · "+esc(h.o):"")+"</span><h3>"+esc(h.n)+'</h3><div class="facts">'+facts(h)+"</div></div></a>"+(i===bandAt-1&&l.length>bandAt+2?BAND:"")).join("");
 $("empty").hidden=l.length>0;$("more").hidden=l.length<=shown;$("more-label").textContent=""}
 $("filters").addEventListener("input",()=>{shown=PAGE;grid()});$("chips").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;area=b.dataset.a;chips();shown=PAGE;grid()});
-$("more-btn").addEventListener("click",()=>{shown+=PAGE;grid()});chips();grid();`;
+$("more-btn").addEventListener("click",()=>{shown+=PAGE;grid()});let rz,lc=0;addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(()=>{const c=getComputedStyle($("grid")).gridTemplateColumns.split(" ").length;if(c!==lc){lc=c;grid()}},200)});chips();grid();`;
   return page({
     title: "Home to Host · Private homes in London and across the UK",
     description: `Over 1,000 private homes in London and across the UK, from apartments to large family houses. Enquire for a personal shortlist and rate.`,
@@ -244,7 +278,7 @@ f.addEventListener("submit",async e=>{e.preventDefault();const d=Object.fromEntr
 if(!String(d.name||"").trim()||!/^\\S+@\\S+\\.\\S+$/.test(String(d.email||"").trim())){hint.textContent="Add your name and a valid email so we can reply.";hint.className="err";return}
 send.disabled=true;send.textContent="Sending…";try{const r=await fetch("/api/enquire",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(d)});const j=await r.json().catch(()=>({}));
 if(!r.ok)throw new Error(j.error||"Something went wrong");f.hidden=true;const t=document.getElementById("thanks");t.hidden=false;t.focus()}catch(err){hint.textContent=(err.message||"Something went wrong")+". Please try again, or email info@hometohost.com.";hint.className="err";send.disabled=false;send.textContent="Send enquiry"}});`;
-  return page({ title: "Enquire · Home to Host", description: "Tell us about your stay, or about a home you'd like us to look after, and we'll reply personally.", canonical: site + "/enquire", body, script });
+  return page({ title: "Enquire · Home to Host", description: "Tell us about your stay, or about a home you'd like us to look after, and we'll reply personally.", canonical: site + "/enquire", body, script, popup: false });
 }
 
 const STAY_LEAD = "There's no instant booking. Send a few details and someone from our team will reply personally with suitable homes, availability and a rate.";
