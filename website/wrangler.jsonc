@@ -14,8 +14,8 @@
   // Re-reads Airtable every 10 minutes and refreshes a batch of homes' photos on every run.
   "triggers": { "crons": ["*/2 * * * *"] },
   "vars": {
-    "AIRTABLE_BASE": "appuAYZuCpS5ULeGm",
-    "AIRTABLE_HOMES_TABLE": "tblRyriHbWHWwsvD5",
+    "AIRTABLE_BASE": "appRGN0sb239e43t9",
+    "AIRTABLE_HOMES_TABLE": "tblJrrzqBTuSvlJXh",
     "AIRTABLE_ENQUIRIES_BASE": "appTXzJPcK4XvfdM0",
     "AIRTABLE_ENQUIRIES_TABLE": "tblsd4LMSgH9SzHmW",
     "SITE_URL": "https://hometohost.com",

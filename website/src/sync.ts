@@ -17,13 +17,13 @@ export interface Env {
 
 type Row = Record<string, unknown>;
 
-// Airtable field IDs (Properties2). IDs stay valid if a field is renamed.
+// Airtable field IDs (MAIN table, main base). IDs stay valid if a field is renamed.
 export const F = {
-  name: "fld39D15lem47DKvP", address: "fld0INwAQIwNF2nln", beds: "fldmCH4iUkMjY3LGM", sleeps: "fldsvo80oX9ZkpF6w",
-  baths: "fldrYMN1lpVeLqYXa", area: "fld8NTkFdIW1dkVoo", city: "fldie8byPzrHJdLqb", drive: "fldgMSqDmJRrCbyyj",
-  drive2: "fldhSU6tvngHJTKXG", hostify: "fldR46PrZWKnPiskd", type: "fldQLxWMiw5a3I7v7", parking: "flduAFMilUX6bKN2E",
-  aircon: "fld4LBBT8sh4e2FZ4", region: "fldHlEZFDtqJM5aY0", show: "fldNHFd7rP3bsI0p4", webName: "fldNjlcezJk802hBG",
-  webDesc: "fldzWQpyG1HP1BVQS", webHighlights: "fldTUJjVrnPCirK22", cover: "fldfVRVxQ2Bb6J7yu",
+  name: "fldIXqPfa2gPd4uj8", address: "fldEzto0CyKERW0jA", beds: "fldGe8BoXpOnajWgp", sleeps: "fldIKNcbOrpiYTRrh",
+  baths: "fldXmw9I9YBZUqyRZ", area: "fldJwy3O4vXEhf4fu", city: "fldIPaVwMU9PCezEg", drive: "fldIBaODEqba6lg6y",
+  drive2: "fldIBaODEqba6lg6y", hostify: "fldto4wugQjGUAKTV", type: "fldpYNcfxWhHVccO8", parking: "fldJLSuShTogiMelf",
+  aircon: "fld5GBQZ4Lpvppzqu", region: "fldfV6WSDSW60sBkE", show: "fldvfaSOACK1ArYjr", webName: "fldbXONvKmfPU4qQR",
+  webDesc: "fldZUzX4pel6mytYD", webHighlights: "fldRvgItY8dpJOHaa", cover: "fldejShwrpGqX1pdr",
 };
 
 export async function ensureSchema(db: D1Database) {
