@@ -27,7 +27,7 @@ export function facts(h: Home) {
 
 const CSS = `
 :root{--navy:#0E1A2B;--navy-2:#1B2A41;--navy-3:#2A3B55;--gold:#C2A06B;--gold-deep:#8A6A35;--ivory:#F5F2EC;--sand:#E9E3D8;--paper:#FFF;--ink:#1A1E26;--muted:#535A66;--line:#DCD5C8;--on-navy:#F5F2EC;--on-navy-muted:#C9C3B6;--display:"Cormorant Garamond","Iowan Old Style",Georgia,serif;--body:"Montserrat","Helvetica Neue",Arial,sans-serif;--wrap:1320px;color-scheme:light}
-*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}body{margin:0;background:var(--ivory);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.7}
+*{box-sizing:border-box}[hidden]{display:none!important}html{-webkit-text-size-adjust:100%}body{margin:0;background:var(--ivory);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.7}
 a{color:inherit}img{max-width:100%;display:block}button,input,select,textarea{font:inherit;color:inherit}:focus-visible{outline:2px solid var(--gold);outline-offset:3px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 .gutter{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}.wrap{max-width:var(--wrap);margin:0 auto}
@@ -42,7 +42,7 @@ nav.top .btn-gold,.btn-gold{background:var(--gold);color:var(--navy)}.btn-gold:h
 .btn-line{background:transparent;color:var(--navy);border:1px solid var(--navy)}.btn-line:hover{background:var(--navy);color:var(--on-navy)}
 .ph{position:relative;overflow:hidden;background:var(--navy-3);aspect-ratio:3/2;max-width:100%}.ph img{width:100%;height:100%;object-fit:cover;transition:transform 1.2s ease}.card:hover .ph img{transform:scale(1.04)}
 .hero{background:var(--navy);color:var(--on-navy)}.hero .wrap{padding-block:0 72px}.hero-frame{position:relative;min-height:540px;display:flex;align-items:flex-end;overflow:hidden}
-.hero-frame>img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.hero-frame::before{content:"";position:absolute;inset:0;z-index:1;background:linear-gradient(90deg,rgba(14,26,43,.55) 0%,rgba(14,26,43,0) 65%),linear-gradient(180deg,rgba(14,26,43,0) 30%,rgba(14,26,43,.85) 100%)}
+.hero-frame>img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.hero-frame::before{content:"";position:absolute;inset:0;z-index:1;background:linear-gradient(90deg,rgba(14,26,43,.68) 0%,rgba(14,26,43,0) 65%),linear-gradient(180deg,rgba(14,26,43,0) 30%,rgba(14,26,43,.85) 100%)}
 .hero-copy{position:relative;z-index:2;padding:56px clamp(20px,5vw,64px);max-width:800px;display:flex;flex-direction:column;gap:18px}.hero-copy h1{font-size:clamp(42px,6.2vw,78px)}.hero-copy p{margin:0;font-size:16.5px;font-weight:300;color:#E6E1D6;max-width:34em}
 .search{background:var(--paper);color:var(--ink);display:flex;flex-wrap:wrap;margin:-40px clamp(0px,3vw,40px) 0;position:relative;z-index:3;box-shadow:0 24px 60px rgba(8,14,28,.28)}
 .search label{flex:1 1 170px;padding:15px 20px;display:flex;flex-direction:column;gap:4px;font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
@@ -103,16 +103,15 @@ export function homePage(homes: Home[], site: string) {
     s: h.slug, n: h.name, a: h.area, w: where(h), o: h.outcode, b: h.beds, ba: h.baths, sl: h.sleeps, t: h.type,
     c: h.photos[0] ? photoUrl(h.photos[0], 800) : "",
   }));
-  const london = homes.filter((h) => h.area !== "Outside London").length;
   const body = `
-<div class="hero gutter on-dark"><div class="wrap"><div class="hero-frame"><img src="/hero.jpg" alt="A Tudor-style manor house at dusk behind a long lawn" fetchpriority="high">
+<div class="hero gutter on-dark"><div class="wrap"><div class="hero-frame"><img src="/hero.jpg" alt="A bright open-plan living room with floor-to-ceiling windows and a beamed wooden ceiling" fetchpriority="high">
 <div class="hero-copy"><span class="eyebrow">London &amp; across the UK</span><h1>Homes across London, and further afield.</h1>
 <p>Apartments, townhouses and grand houses by the sea, each prepared and looked after by our own team. Tell us your dates and we'll come back with the homes that fit.</p></div></div>
 <form class="search" id="filters" aria-label="Filter homes" onsubmit="return false">
 <label for="f-q">Search<input id="f-q" type="search" placeholder="Street, area or postcode" autocomplete="off"></label>
 <label for="f-beds">Bedrooms<select id="f-beds"><option value="0">Any</option><option value="1">1+</option><option value="2">2+</option><option value="3">3+</option><option value="4">4+</option><option value="5">5+</option><option value="6">6+</option></select></label>
 <label for="f-guests">Guests<select id="f-guests"><option value="0">Any</option><option value="2">2+</option><option value="4">4+</option><option value="6">6+</option><option value="8">8+</option><option value="10">10+</option><option value="12">12+</option></select></label>
-<div class="count" aria-live="polite"><b id="f-count">${homes.length}</b> homes</div></form></div></div>
+<a class="count" href="/enquire" style="text-decoration:none">Make an enquiry</a></form></div></div>
 <section id="homes" class="gutter"><div class="wrap"><div class="sec-head"><div><span class="eyebrow">The collection</span><h2>Every home, prepared by our team</h2></div><a class="btn btn-line" href="/enquire">Ask about a home</a></div>
 <div class="chips" id="chips" role="group" aria-label="Area"></div><div class="grid" id="grid"></div>
 <p class="empty" id="empty" hidden>No homes match. Try fewer bedrooms or guests, or a different area.</p>
@@ -125,20 +124,20 @@ export function homePage(homes: Home[], site: string) {
 <section id="corporate" class="navy-band gutter on-dark"><div class="wrap split"><div><span class="eyebrow">Corporate &amp; extended stays</span><h2>A home for the whole assignment.</h2>
 <p>Relocations, project teams, insurance placements and long stays. One contact for your booking team, homes prepared to the same standard every time, and straightforward invoicing.</p>
 <a class="btn btn-gold" href="/enquire?type=corporate">Corporate enquiry</a></div>
-<div class="stats"><div><b>${homes.length}</b><span>homes on this site</span></div><div><b>24/7</b><span>guest support line</span></div><div><b>${london}</b><span>homes in London</span></div><div><b>Pets</b><span>welcome in our homes</span></div></div></div></section>`;
+<div class="stats"><div><b>1,000+</b><span>homes across the UK</span></div><div><b>24/7</b><span>guest support line</span></div><div><b>700+</b><span>homes in London</span></div><div><b>Pets</b><span>welcome in our homes</span></div></div></div></section>`;
   const script = `const H=${JSON.stringify(data).replace(/</g, "\\u003c")};const PAGE=24;let shown=PAGE,area="All";const $=i=>document.getElementById(i);
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));const half=x=>String(Math.round(x*2)/2);
 const facts=h=>[h.b!=null?"<span>"+(h.b===0?"Studio":half(h.b)+" bedroom"+(h.b===1?"":"s"))+"</span>":"",h.ba?"<span>"+half(h.ba)+" bath"+(h.ba===1?"":"s")+"</span>":"",h.sl?"<span>Sleeps "+h.sl+"</span>":""].join("");
 const AREAS=["North","East","South","West","Central","Outside London"];
 function list(){const q=$("f-q").value.trim().toLowerCase(),b=+$("f-beds").value,g=+$("f-guests").value;return H.filter(h=>(area==="All"||h.a===area)&&(!b||(h.b||0)>=b)&&(!g||(h.sl||0)>=g)&&(!q||(h.n+" "+h.w+" "+h.o+" "+(h.t||"")).toLowerCase().includes(q)))}
-function chips(){$("chips").innerHTML=[["All",H.length],...AREAS.map(a=>[a,H.filter(h=>h.a===a).length])].filter(x=>x[1]).map(([k,c])=>'<button type="button" data-a="'+k+'" aria-pressed="'+(k===area)+'">'+(k==="All"||k==="Outside London"?k:k+" London")+"<span>"+c+"</span></button>").join("")}
+function chips(){$("chips").innerHTML=[["All",H.length],...AREAS.map(a=>[a,H.filter(h=>h.a===a).length])].filter(x=>x[1]).map(([k,c])=>'<button type="button" data-a="'+k+'" aria-pressed="'+(k===area)+'">'+(k==="All"||k==="Outside London"?k:k+" London")+"</button>").join("")}
 function grid(){const l=list();$("grid").innerHTML=l.slice(0,shown).map((h,i)=>'<a class="card" href="/homes/'+esc(h.s)+'"><div class="ph">'+(h.c?'<img src="'+esc(h.c)+'" alt="'+esc(h.n)+'" loading="'+(i<6?"eager":"lazy")+'" decoding="async">':"")+'</div><div class="card-body"><span class="area">'+esc(h.w)+(h.o?" · "+esc(h.o):"")+"</span><h3>"+esc(h.n)+'</h3><div class="facts">'+facts(h)+"</div></div></a>").join("");
-$("f-count").textContent=l.length;$("empty").hidden=l.length>0;$("more").hidden=l.length<=shown;$("more-label").textContent="Showing "+Math.min(shown,l.length)+" of "+l.length}
+$("empty").hidden=l.length>0;$("more").hidden=l.length<=shown;$("more-label").textContent=""}
 $("filters").addEventListener("input",()=>{shown=PAGE;grid()});$("chips").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;area=b.dataset.a;chips();shown=PAGE;grid()});
 $("more-btn").addEventListener("click",()=>{shown+=PAGE;grid()});chips();grid();`;
   return page({
     title: "Home to Host · Private homes in London and across the UK",
-    description: `${homes.length} private homes in London and across the UK, from apartments to large family houses. Enquire for a personal shortlist and rate.`,
+    description: `Over 1,000 private homes in London and across the UK, from apartments to large family houses. Enquire for a personal shortlist and rate.`,
     canonical: site + "/", image: site + "/hero.jpg", body, script,
   });
 }
@@ -175,37 +174,54 @@ ${h.amenities.length ? `<div class="block"><span class="eyebrow">In the home</sp
 
 // ---------- enquiry page ----------
 
-export function enquirePage(homes: Pick<Home, "slug" | "name" | "area" | "place" | "beds">[], site: string, preset: { home?: string; type?: string }) {
+export function enquirePage(_homes: unknown[], site: string, preset: { home?: string; type?: string }) {
   const types = [["stay", "A stay"], ["corporate", "Corporate / long stay"], ["owner", "Listing my home"]];
   const pick = types.some((t) => t[0] === preset.type) ? preset.type : "stay";
-  const opts = [...homes].sort((a, b) => a.name.localeCompare(b.name)).map((h) =>
-    `<option value="${esc(h.slug)}"${h.slug === preset.home ? " selected" : ""}>${esc(h.name)} · ${esc(where(h))}${h.beds != null ? " · " + (h.beds === 0 ? "studio" : half(h.beds) + " bed") : ""}</option>`).join("");
+  const owner = pick === "owner";
+  const hide = owner ? " hidden" : "";
   const body = `<section class="gutter"><div class="wrap split" style="align-items:flex-start">
 <div style="flex:1 1 320px;display:flex;flex-direction:column;gap:18px"><a class="crumb" href="/#homes">← The collection</a><span class="eyebrow">Enquire</span>
-<h1 style="font-size:clamp(42px,5.6vw,66px)">Tell us about your stay.</h1><p style="margin:0;color:var(--muted);max-width:34em">There's no instant booking. Send a few details and someone from our team will reply personally with suitable homes, availability and a rate.</p>
+<h1 style="font-size:clamp(42px,5.6vw,66px)" id="e-title">${owner ? "Tell us about your home." : "Tell us about your stay."}</h1>
+<p style="margin:0;color:var(--muted);max-width:34em" id="e-lead">${owner ? OWNER_LEAD : STAY_LEAD}</p>
 <div style="display:flex;flex-direction:column;gap:14px;border-top:1px solid var(--line);padding-top:22px"><div><div class="eyebrow" style="color:var(--muted)">Call</div><a href="tel:+442034882323" style="font-size:18px;text-decoration:none">020 3488 2323</a></div>
 <div><div class="eyebrow" style="color:var(--muted)">Email</div><a href="mailto:info@hometohost.com" style="font-size:18px;text-decoration:none">info@hometohost.com</a></div></div></div>
 <div style="flex:999 1 560px;min-width:0"><form class="form" id="enq" method="post" action="/api/enquire" novalidate>
 <fieldset style="border:0;padding:0;margin:0;display:flex;flex-direction:column;gap:12px"><legend class="field" style="padding:0;margin-bottom:12px">I'm enquiring about</legend><div class="types">
 ${types.map(([v, l]) => `<label><input type="radio" name="type" value="${v}"${v === pick ? " checked" : ""}>${l}</label>`).join("")}</div></fieldset>
-<div class="fields"><label class="field" for="e-home">Home<select id="e-home" name="home"><option value="">Not sure yet</option>${opts}</select></label>
-<label class="field" for="e-guests">Guests<select id="e-guests" name="guests"><option>1–2</option><option>3–4</option><option>5–8</option><option>9–12</option><option>13+</option></select></label>
-<label class="field" for="e-in">Arrival<input id="e-in" name="arrival" type="date"></label><label class="field" for="e-out">Departure<input id="e-out" name="departure" type="date"></label>
+${preset.home ? `<input type="hidden" name="home" value="${esc(preset.home)}">` : ""}
+<div class="fields">
+<label class="field stay-only" for="e-guests"${hide}>Guests<select id="e-guests" name="guests"><option>1–2</option><option>3–4</option><option>5–8</option><option>9–12</option><option>13+</option></select></label>
+<label class="field stay-only" for="e-in"${hide}>Arrival<input id="e-in" name="arrival" type="date"></label><label class="field stay-only" for="e-out"${hide}>Departure<input id="e-out" name="departure" type="date"></label>
 <label class="field" for="e-name">Full name<input id="e-name" name="name" type="text" autocomplete="name" required maxlength="120"></label>
 <label class="field" for="e-email">Email<input id="e-email" name="email" type="email" autocomplete="email" required maxlength="200"></label>
 <label class="field" for="e-phone">Phone<input id="e-phone" name="phone" type="tel" autocomplete="tel" maxlength="40"></label>
 <label class="field" for="e-co">Company (optional)<input id="e-co" name="company" type="text" autocomplete="organization" maxlength="120"></label></div>
-<label class="field" for="e-msg">Anything we should know?<textarea id="e-msg" name="message" maxlength="4000" placeholder="Parking, pets, workspace, accessibility…"></textarea></label>
+<label class="field" for="e-msg"><span id="e-msg-label">${owner ? "About your home" : "Anything we should know?"}</span><textarea id="e-msg" name="message" maxlength="4000" placeholder="${owner ? OWNER_PH : STAY_PH}"></textarea></label>
 <div class="hp" aria-hidden="true"><label>Leave this empty<input name="website" tabindex="-1" autocomplete="off"></label></div>
-<div class="form-foot"><small id="e-hint">Sending this doesn't book anything. It starts a conversation with our team.</small><button class="btn btn-navy" type="submit" id="e-send">Send enquiry</button></div></form>
+<div class="form-foot"><small id="e-hint">${owner ? OWNER_HINT : STAY_HINT}</small><button class="btn btn-navy" type="submit" id="e-send">Send enquiry</button></div></form>
 <div class="form thanks" id="thanks" hidden tabindex="-1"><span class="eyebrow">Received</span><h2>Thank you. We'll be in touch.</h2>
-<p>Someone from our team will reply personally with availability and a rate. If your stay is urgent, call us on 020 3488 2323.</p><a class="btn btn-line" href="/#homes">Back to the collection</a></div></div></div></section>`;
-  const script = `const f=document.getElementById("enq"),hint=document.getElementById("e-hint"),send=document.getElementById("e-send");
-f.addEventListener("submit",async e=>{e.preventDefault();const d=Object.fromEntries(new FormData(f));if(!String(d.name||"").trim()||!/^\\S+@\\S+\\.\\S+$/.test(String(d.email||"").trim())){hint.textContent="Add your name and a valid email so we can reply.";hint.className="err";return}
+<p id="e-thanks">${owner ? OWNER_THANKS : STAY_THANKS}</p><a class="btn btn-line" href="/#homes">Back to the collection</a></div></div></div></section>`;
+  const T = { stay: ["Tell us about your stay.", STAY_LEAD, "Anything we should know?", STAY_PH, STAY_HINT, STAY_THANKS],
+    owner: ["Tell us about your home.", OWNER_LEAD, "About your home", OWNER_PH, OWNER_HINT, OWNER_THANKS] };
+  const script = `const T=${JSON.stringify(T)};const f=document.getElementById("enq"),hint=document.getElementById("e-hint"),send=document.getElementById("e-send");
+function mode(){const o=f.querySelector("input[name=type]:checked")?.value==="owner",t=T[o?"owner":"stay"];document.querySelectorAll(".stay-only").forEach(x=>x.hidden=o);
+document.getElementById("e-title").textContent=t[0];document.getElementById("e-lead").textContent=t[1];document.getElementById("e-msg-label").textContent=t[2];document.getElementById("e-msg").placeholder=t[3];hint.textContent=t[4];hint.className="";document.getElementById("e-thanks").textContent=t[5]}
+f.addEventListener("change",e=>{if(e.target.name==="type")mode()});
+f.addEventListener("submit",async e=>{e.preventDefault();const d=Object.fromEntries(new FormData(f));if(d.type==="owner"){delete d.guests;delete d.arrival;delete d.departure}
+if(!String(d.name||"").trim()||!/^\\S+@\\S+\\.\\S+$/.test(String(d.email||"").trim())){hint.textContent="Add your name and a valid email so we can reply.";hint.className="err";return}
 send.disabled=true;send.textContent="Sending…";try{const r=await fetch("/api/enquire",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(d)});const j=await r.json().catch(()=>({}));
 if(!r.ok)throw new Error(j.error||"Something went wrong");f.hidden=true;const t=document.getElementById("thanks");t.hidden=false;t.focus()}catch(err){hint.textContent=(err.message||"Something went wrong")+". Please try again, or email info@hometohost.com.";hint.className="err";send.disabled=false;send.textContent="Send enquiry"}});`;
-  return page({ title: "Enquire · Home to Host", description: "Tell us your dates and guests and we'll reply personally with homes that suit and a rate.", canonical: site + "/enquire", body, script });
+  return page({ title: "Enquire · Home to Host", description: "Tell us about your stay, or about a home you'd like us to look after, and we'll reply personally.", canonical: site + "/enquire", body, script });
 }
+
+const STAY_LEAD = "There's no instant booking. Send a few details and someone from our team will reply personally with suitable homes, availability and a rate.";
+const OWNER_LEAD = "Thinking about letting your home with us? Send a few details and someone from our team will be in touch to talk it through.";
+const STAY_PH = "Area, parking, pets, workspace, accessibility…";
+const OWNER_PH = "Address or postcode, number of bedrooms, and anything else you'd like us to know…";
+const STAY_HINT = "Sending this doesn't book anything. It starts a conversation with our team.";
+const OWNER_HINT = "Sending this doesn't commit you to anything. It starts a conversation with our team.";
+const STAY_THANKS = "Someone from our team will reply personally with availability and a rate. If your stay is urgent, call us on 020 3488 2323.";
+const OWNER_THANKS = "Someone from our team will be in touch to talk about your home. You can also call us on 020 3488 2323.";
 
 export function notFoundPage(site: string) {
   return page({ title: "Not found · Home to Host", description: "This page isn't available.", canonical: site + "/",
