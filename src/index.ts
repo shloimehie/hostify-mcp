@@ -12,7 +12,7 @@ import {
 } from "./queries";
 import { ensureSchema } from "./schema";
 import { freshness, runSync, syncStatus } from "./sync";
-import { executePending, previewCreateReservation, recentWrites, writesEnabled } from "./writes";
+import { executePending, previewCancelReservation, previewCreateReservation, recentWrites, writesEnabled } from "./writes";
 
 interface Env {
   HOSTIFY_API_KEY: string;
@@ -64,7 +64,7 @@ const INSTRUCTIONS = [
 ].join(" ");
 
 export class HostifyMCPV2 extends McpAgent<Env, Record<string, never>, Props> {
-  server = new McpServer({ name: "Home to Host – Hostify", version: "3.1.0" }, { instructions: INSTRUCTIONS });
+  server = new McpServer({ name: "Home to Host – Hostify", version: "3.2.0" }, { instructions: INSTRUCTIONS });
 
   async init() {
     const db = () => this.env.DB;
@@ -332,8 +332,8 @@ export class HostifyMCPV2 extends McpAgent<Env, Record<string, never>, Props> {
         currency: z.string().length(3).optional().describe("e.g. GBP"),
         source: z.string().min(2).max(40).default("direct").describe("Booking source/channel, e.g. direct, ICAB, corporate"),
         status: z.enum(["accepted", "pending"]).default("accepted"),
-        guest_email: z.string().email().optional(),
-        guest_phone: z.string().min(5).max(30).optional(),
+        guest_email: z.string().email().describe("Required by Hostify"),
+        guest_phone: z.string().min(5).max(30).describe("Required by Hostify, e.g. +447700900000"),
         note: z.string().max(1000).optional().describe("Internal note on the booking"),
         extra_fields: z.record(z.union([z.string(), z.number(), z.boolean()])).optional()
           .describe("Advanced: extra Hostify fields to include as-is"),
@@ -341,6 +341,21 @@ export class HostifyMCPV2 extends McpAgent<Env, Record<string, never>, Props> {
       async (args) => {
         if (!writesEnabled(this.env)) return writesOff();
         try { return result(await previewCreateReservation(this.env, args, who())); } catch (e) { return failure(e); }
+      },
+    );
+
+    this.server.tool(
+      "cancel_reservation",
+      "WRITE – step 1 of 2. Prepares cancelling one reservation. DIRECT BOOKINGS ONLY: bookings from Airbnb, Booking.com or any other " +
+      "channel are refused. Checks the live booking in Hostify and returns a preview; NOTHING is cancelled yet. Use find_reservation " +
+      "first to get the reservation id. Show the preview; only if the user says yes, call confirm_write with confirm_token.",
+      {
+        reservation_id: z.number().int().positive(),
+        reason: z.string().max(500).optional().describe("Why it is being cancelled (kept in the write log)"),
+      },
+      async ({ reservation_id, reason }) => {
+        if (!writesEnabled(this.env)) return writesOff();
+        try { return result(await previewCancelReservation(this.env, reservation_id, reason, who())); } catch (e) { return failure(e); }
       },
     );
 
