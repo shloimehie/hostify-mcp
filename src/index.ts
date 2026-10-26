@@ -12,7 +12,10 @@ import {
 } from "./queries";
 import { ensureSchema } from "./schema";
 import { freshness, runSync, syncStatus } from "./sync";
-import { executePending, previewCancelReservation, previewCreateReservation, recentWrites, writesEnabled } from "./writes";
+import {
+  executePending, previewCancelReservation, previewCreateReservation, previewGuestMessage, previewUpdateReservation,
+  readGuestThread, recentWrites, writesEnabled,
+} from "./writes";
 
 interface Env {
   HOSTIFY_API_KEY: string;
@@ -64,7 +67,7 @@ const INSTRUCTIONS = [
 ].join(" ");
 
 export class HostifyMCPV2 extends McpAgent<Env, Record<string, never>, Props> {
-  server = new McpServer({ name: "Home to Host – Hostify", version: "3.2.1" }, { instructions: INSTRUCTIONS });
+  server = new McpServer({ name: "Home to Host – Hostify", version: "3.3.0" }, { instructions: INSTRUCTIONS });
 
   async init() {
     const db = () => this.env.DB;
@@ -335,6 +338,10 @@ export class HostifyMCPV2 extends McpAgent<Env, Record<string, never>, Props> {
         guest_email: z.string().email().describe("Required by Hostify"),
         guest_phone: z.string().min(5).max(30).describe("Required by Hostify, e.g. +447700900000"),
         note: z.string().max(1000).optional().describe("Internal note on the booking"),
+        base_price: z.number().min(0).optional().describe("Optional base price (before fees)"),
+        pets: z.number().int().min(0).max(5).optional(),
+        allow_overlap: z.boolean().default(false)
+          .describe("DANGER: lets Hostify accept dates that clash with another booking (double booking). Only when the user explicitly asks."),
         extra_fields: z.record(z.union([z.string(), z.number(), z.boolean()])).optional()
           .describe("Advanced: extra Hostify fields to include as-is"),
       },
@@ -358,6 +365,60 @@ export class HostifyMCPV2 extends McpAgent<Env, Record<string, never>, Props> {
       async ({ reservation_id, reason, cancelled_by }) => {
         if (!writesEnabled(this.env)) return writesOff();
         try { return result(await previewCancelReservation(this.env, reservation_id, reason, who(), cancelled_by)); } catch (e) { return failure(e); }
+      },
+    );
+
+    this.server.tool(
+      "update_reservation",
+      "WRITE – step 1 of 2. Prepares changes to one reservation: new dates (direct bookings only), internal notes (appended by default), " +
+      "planned arrival/departure times, or check-in / check-out marks. Returns a before/after preview; NOTHING is changed yet. " +
+      "Show the preview; only if the user says yes, call confirm_write with confirm_token.",
+      {
+        reservation_id: z.number().int().positive(),
+        check_in: date.optional().describe("New arrival date (direct bookings only)"),
+        check_out: date.optional().describe("New departure date (direct bookings only)"),
+        notes: z.string().max(2000).optional().describe("Internal reservation notes"),
+        notes_mode: z.enum(["append", "replace"]).default("append").describe("append keeps existing notes; replace overwrites them"),
+        planned_arrival: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/).optional().describe("HH:MM"),
+        planned_departure: z.string().regex(/^\d{2}:\d{2}(:\d{2})?$/).optional().describe("HH:MM"),
+        checked_in: z.boolean().optional().describe("true = mark checked-in, false = undo"),
+        checked_out: z.boolean().optional().describe("true = mark checked-out, false = undo"),
+        allow_overlap: z.boolean().default(false).describe("Only if the user explicitly accepts a double booking"),
+      },
+      async (args) => {
+        if (!writesEnabled(this.env)) return writesOff();
+        try { return result(await previewUpdateReservation(this.env, args, who())); } catch (e) { return failure(e); }
+      },
+    );
+
+    this.server.tool(
+      "read_guest_messages",
+      "Live from Hostify. The message thread for one reservation (or thread id), newest first. Emails and phone numbers are hidden.",
+      {
+        reservation_id: z.number().int().positive().optional(),
+        thread_id: z.number().int().positive().optional(),
+        limit: z.number().int().min(1).max(50).default(15),
+      },
+      async ({ reservation_id, thread_id, limit }) => {
+        try { return result(await readGuestThread(this.env, reservation_id, thread_id, limit)); } catch (e) { return failure(e); }
+      },
+    );
+
+    this.server.tool(
+      "send_guest_message",
+      "WRITE – step 1 of 2. Prepares a message to the guest of one reservation (via the booking channel by default), or an internal team " +
+      "note on the thread (kind=internal_note, never sent to the guest). Returns a preview with who it goes to and the exact text; NOTHING is sent yet. " +
+      "Show the full message to the user; only if they say yes, call confirm_write. Never invent or add content the user did not approve.",
+      {
+        reservation_id: z.number().int().positive().optional(),
+        thread_id: z.number().int().positive().optional(),
+        message: z.string().min(1).max(4000),
+        kind: z.enum(["reply", "internal_note"]).default("reply"),
+        send_by: z.enum(["channel", "email", "sms", "whatsapp"]).default("channel"),
+      },
+      async (args) => {
+        if (!writesEnabled(this.env)) return writesOff();
+        try { return result(await previewGuestMessage(this.env, args, who())); } catch (e) { return failure(e); }
       },
     );
 

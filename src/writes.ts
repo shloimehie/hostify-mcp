@@ -54,7 +54,7 @@ export async function hostifySend(
 
 type Method = "POST" | "PUT" | "DELETE";
 interface Attempt { method: Method; path: string; body: Row }
-interface SendPlan { attempts: Attempt[]; verify?: { path: string; expect_status: string } }
+interface SendPlan { attempts: Attempt[]; verify?: { path: string; expect_status: string; expect?: Record<string, string> } }
 
 interface PendingRow {
   token: string;
@@ -137,9 +137,14 @@ export async function executePending(env: WriteEnv, token: string, user: string)
         const status = now?.status ?? null;
         outcome.verified_status = status;
         outcome.verified = !!status && new RegExp(plan.verify.expect_status, "i").test(status);
+        for (const [k, v] of Object.entries(plan.verify.expect ?? {})) {
+          const got = now ? (now as unknown as Row)[k] : null;
+          if (got !== v) { outcome.verified = false; outcome[`verified_${k}`] = got; }
+        }
+        if (now) { outcome.now = { status: now.status, check_in: now.check_in, check_out: now.check_out, nights: now.nights, total_price: now.total_price }; }
         if (!outcome.verified) {
           outcome.ok = false;
-          outcome.warning = `Hostify accepted the request but the reservation status is now "${status}". Check it in Hostify.`;
+          outcome.warning = `Hostify accepted the request but the reservation does not show the expected result (status "${status}"). Check it in Hostify.`;
         }
       } catch (e) {
         outcome.verified = null;
@@ -197,6 +202,9 @@ export interface NewReservation {
   guest_phone?: string;
   note?: string;
   extra_fields?: Row;
+  allow_overlap?: boolean;
+  base_price?: number;
+  pets?: number;
 }
 
 // The one place that decides Hostify's field names for POST /reservations.
@@ -216,7 +224,14 @@ export function buildReservationBody(listingId: number, r: NewReservation): Row 
   if (r.guest_email) body.email = r.guest_email;
   if (r.guest_phone) body.phone = r.guest_phone;
   if (r.note) body.note = r.note;
-  return { ...body, ...(r.extra_fields ?? {}) };
+  if (r.base_price !== undefined) body.base_price = r.base_price;
+  if (r.pets !== undefined) body.pets = r.pets;
+  // skip_restrictions also bypasses availability (tested 26 Oct 2026), so it is
+  // only ever sent through the explicit allow_overlap switch.
+  const extra = { ...(r.extra_fields ?? {}) };
+  delete extra.skip_restrictions;
+  if (r.allow_overlap) body.skip_restrictions = true;
+  return { ...body, ...extra };
 }
 
 // Hide contact details in anything shown back in chat.
@@ -310,6 +325,16 @@ export async function previewCreateReservation(env: WriteEnv, r: NewReservation,
   } catch { /* preview still works without it */ }
   if (cleaningFee) warnings.push(`Hostify will add this listing's cleaning fee of ${cleaningFee} on top of the price.`);
 
+  const clash = overlaps.results.length > 0 || (availability.checked && !availability.all_open);
+  if (clash && !r.allow_overlap) {
+    warnings.push("Hostify will reject these dates as unavailable unless allow_overlap is set — which creates a DOUBLE BOOKING.");
+  }
+  if (r.allow_overlap) {
+    warnings.unshift(clash
+      ? "⚠ DOUBLE BOOKING: allow_overlap is on and these dates clash. Confirming creates an overlapping booking that may sync to the channels."
+      : "allow_overlap is on (also skips minimum stay and capacity rules). No clash found.");
+  }
+
   const body = buildReservationBody(chosen.id, r);
   const summary = {
     property: { id: chosen.id, nickname: chosen.nickname, street: chosen.street, zipcode: chosen.zipcode },
@@ -318,6 +343,7 @@ export async function previewCreateReservation(env: WriteEnv, r: NewReservation,
     total_price: r.total_price ?? null, currency: r.currency ?? null,
     listing_cleaning_fee: cleaningFee,
     source: r.source, status: r.status,
+    allow_overlap: !!r.allow_overlap,
   };
   const pending = await preparePending(db, "create_reservation", "POST", "/reservations", body, summary, user);
 
@@ -400,5 +426,221 @@ export async function previewCancelReservation(
     summary,
     warnings,
     request: { method: plan.attempts[0].method, path: plan.attempts[0].path, body: plan.attempts[0].body },
+  };
+}
+
+// ---------- shared helpers for edits & messaging ----------
+
+async function liveReservation(env: WriteEnv, reservationId: number): Promise<{ raw: Row; res: NonNullable<ReturnType<typeof mapReservation>> }> {
+  const body = await hostifyGet(env.HOSTIFY_API_KEY, `/reservations/${reservationId}`, { fees: 1 }) as Row;
+  const raw = (body.reservation && typeof body.reservation === "object" ? body.reservation : body) as Row;
+  const res = mapReservation(raw);
+  if (!res) throw new Error(`Reservation ${reservationId} was not found in Hostify.`);
+  return { raw, res };
+}
+
+async function nicknameFor(env: WriteEnv, listingId: number | null): Promise<string | null> {
+  if (!listingId) return null;
+  const m = await findListings(env.DB, String(listingId), 1).catch(() => []);
+  return m[0]?.nickname ?? null;
+}
+
+// Guest emails and phone numbers never go back to the model.
+export function redactContacts(text: string | null | undefined): string | null {
+  if (!text) return text ?? null;
+  return text
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email hidden]")
+    // Phone-like runs with 9+ digits (dates and times have fewer, so they stay).
+    .replace(/(?:\+|00)?\d[\d\s().-]{7,}\d/g, (m) => (m.replace(/\D/g, "").length >= 9 ? "[number hidden]" : m));
+}
+
+// Access details (door codes, PINs, WiFi passwords) are cut from anything read back.
+export function redactAccess(text: string | null | undefined): string | null {
+  if (!text) return text ?? null;
+  return text.replace(
+    /\b(door\s*code|access\s*code|entry\s*code|code|pin|passcode|password|wi-?fi|network|ssid|lock\s*box|key\s*safe|keysafe|key\s*box)\b[^\n]{0,60}/gi,
+    (_m, k) => `${k} [hidden]`,
+  );
+}
+
+// ---------- update reservation (dates, notes, arrival times, check-in/out marks) ----------
+
+export interface ReservationEdit {
+  reservation_id: number;
+  check_in?: string;
+  check_out?: string;
+  notes?: string;
+  notes_mode?: "append" | "replace";
+  planned_arrival?: string;
+  planned_departure?: string;
+  checked_in?: boolean;
+  checked_out?: boolean;
+  allow_overlap?: boolean;
+}
+
+export async function previewUpdateReservation(env: WriteEnv, e: ReservationEdit, user: string): Promise<Row> {
+  const { raw, res } = await liveReservation(env, e.reservation_id);
+  if (res.status && /cancel|denied|declin/i.test(res.status)) {
+    return { status: "refused", message: `Reservation ${res.id} is ${res.status}; it cannot be edited here.` };
+  }
+  const isDirect = /^direct\b/i.test(res.source ?? "");
+  const changesDates = (e.check_in && e.check_in !== res.check_in) || (e.check_out && e.check_out !== res.check_out);
+  if (changesDates && !isDirect) {
+    return {
+      status: "refused",
+      message: `Dates can only be changed on direct bookings. This booking is from "${res.source}" — change it on the channel so both sides stay in sync.`,
+    };
+  }
+
+  const newIn = e.check_in ?? res.check_in;
+  const newOut = e.check_out ?? res.check_out;
+  if (!newIn || !newOut) throw new Error("This reservation has no dates in Hostify.");
+  const nights = Math.round((Date.parse(newOut) - Date.parse(newIn)) / 86400000);
+  if (!(nights > 0)) throw new Error("check_out must be after check_in.");
+
+  const warnings: string[] = [];
+  let conflicts: Row[] = [];
+  if (changesDates && res.listing_id) {
+    const rows = await env.DB.prepare(
+      `SELECT id, guest_name, status, check_in, check_out, source FROM h_reservations
+       WHERE listing_id=? AND is_booking=1 AND id<>? AND check_in < ? AND check_out > ? ORDER BY check_in LIMIT 10`,
+    ).bind(res.listing_id, res.id, newOut, newIn).all<Row>();
+    conflicts = rows.results;
+    if (conflicts.length) {
+      warnings.push(e.allow_overlap
+        ? "⚠ DOUBLE BOOKING: the new dates clash with another booking and allow_overlap is on."
+        : "The new dates clash with another booking; Hostify will probably reject the change.");
+    }
+  }
+
+  const body: Row = { listing_id: res.listing_id, check_in: newIn, check_out: newOut };
+  const changes: Row = {};
+  if (changesDates) {
+    changes.dates = { from: `${res.check_in} → ${res.check_out} (${res.nights} nights)`, to: `${newIn} → ${newOut} (${nights} nights)` };
+    warnings.push("Hostify recalculates the price for new dates — check the total afterwards.");
+  }
+  if (e.notes !== undefined) {
+    const existing = typeof raw.notes === "string" ? raw.notes : "";
+    const mode = e.notes_mode ?? "append";
+    body.notes = mode === "append" && existing ? `${existing}\n${e.notes}` : e.notes;
+    changes.notes = { mode, adding: e.notes, existing_notes_length: existing.length };
+    if (mode === "replace" && existing) warnings.push(`Replace mode deletes the existing notes (${existing.length} characters).`);
+  }
+  if (e.planned_arrival) { body.planned_arrival = e.planned_arrival; changes.planned_arrival = e.planned_arrival; }
+  if (e.planned_departure) { body.planned_departure = e.planned_departure; changes.planned_departure = e.planned_departure; }
+  if (e.checked_in !== undefined) { body.checked_in_mark = e.checked_in ? 1 : 0; changes.checked_in_mark = e.checked_in ? "mark checked-in" : "undo checked-in"; }
+  if (e.checked_out !== undefined) { body.checked_out_mark = e.checked_out ? 1 : 0; changes.checked_out_mark = e.checked_out ? "mark checked-out" : "undo checked-out"; }
+  if (!Object.keys(changes).length) throw new Error("Nothing to change — give new dates, notes, arrival/departure times or a check-in/out mark.");
+
+  const summary = {
+    reservation_id: res.id, confirmation_code: res.confirmation_code,
+    property: { id: res.listing_id, nickname: res.listing_nickname ?? await nicknameFor(env, res.listing_id) },
+    source: res.source, status: res.status, changes,
+  };
+  const plan: SendPlan = {
+    attempts: [{ method: "PUT", path: `/reservations/${res.id}`, body }],
+    verify: changesDates
+      ? { path: `/reservations/${res.id}`, expect_status: ".", expect: { check_in: newIn, check_out: newOut } }
+      : { path: `/reservations/${res.id}`, expect_status: "." },
+  };
+  const pending = await preparePending(env.DB, "update_reservation", "PUT", `/reservations/${res.id}`, plan as unknown as Row, summary, user);
+  const shownBody = { ...body };
+  if (typeof shownBody.notes === "string") shownBody.notes = `(${(shownBody.notes as string).length} characters)`;
+  return {
+    status: "preview",
+    message: "Nothing has been changed yet. Show this preview to the user. Only after they clearly say yes, call confirm_write with this token.",
+    confirm_token: pending.token, expires_at: pending.expires_at,
+    summary, warnings, conflicting_bookings: conflicts,
+    request: { method: "PUT", path: `/reservations/${res.id}`, body: shownBody },
+  };
+}
+
+// ---------- guest messaging ----------
+
+async function resolveThread(env: WriteEnv, reservationId?: number, threadId?: number): Promise<{ threadId: number; res: ReturnType<typeof mapReservation> | null }> {
+  if (threadId) return { threadId, res: null };
+  if (!reservationId) throw new Error("Give a reservation_id (or a thread_id).");
+  const { raw, res } = await liveReservation(env, reservationId);
+  const direct = Number(raw.inbox_id);
+  if (Number.isFinite(direct) && direct > 0) return { threadId: direct, res };
+  // Fall back to scanning the most recent inbox threads.
+  for (let page = 1; page <= 5; page++) {
+    const body = await hostifyGet(env.HOSTIFY_API_KEY, "/inbox", { page, per_page: 100 }) as Row;
+    const threads = extractItems(body, ["threads"]);
+    const hit = threads.find((t) => Number(t.reservation_id) === reservationId);
+    if (hit) return { threadId: Number(hit.id), res };
+    if (threads.length < 100) break;
+  }
+  throw new Error(`No inbox thread found for reservation ${reservationId}.`);
+}
+
+export async function readGuestThread(env: WriteEnv, reservationId: number | undefined, threadId: number | undefined, limit: number): Promise<Row> {
+  const resolved = await resolveThread(env, reservationId, threadId);
+  const body = await hostifyGet(env.HOSTIFY_API_KEY, `/inbox/${resolved.threadId}`) as Row;
+  const thread = (body.thread && typeof body.thread === "object" ? body.thread : {}) as Row;
+  const messages = extractItems(body, ["messages"])
+    .map((m) => ({
+      id: m.id,
+      created: m.created,
+      from: m.guest_id ? "guest" : "host/system",
+      guest_first_name: typeof m.guest_name === "string" ? m.guest_name.split(" ")[0] : null,
+      automatic: Number(m.is_automatic) === 1,
+      text: redactAccess(redactContacts(typeof m.message === "string" && m.message ? m.message : null)),
+      system_note: typeof m.notes === "string" && m.notes ? redactAccess(redactContacts(m.notes)) : undefined,
+    }))
+    .sort((a, b) => String(b.created).localeCompare(String(a.created)))
+    .slice(0, limit);
+  return {
+    thread: {
+      id: resolved.threadId, reservation_id: thread.reservation_id ?? reservationId ?? null, listing_id: thread.listing_id ?? null,
+      channel: thread.integration_type_name ?? null, answered: thread.answered ?? null, last_message: thread.last_message ?? null,
+    },
+    messages_newest_first: messages,
+    source: "live",
+  };
+}
+
+export async function previewGuestMessage(
+  env: WriteEnv,
+  a: { reservation_id?: number; thread_id?: number; message: string; kind: "reply" | "internal_note"; send_by?: string },
+  user: string,
+): Promise<Row> {
+  const resolved = await resolveThread(env, a.reservation_id, a.thread_id);
+  const body = await hostifyGet(env.HOSTIFY_API_KEY, `/inbox/${resolved.threadId}`) as Row;
+  const thread = (body.thread && typeof body.thread === "object" ? body.thread : {}) as Row;
+  const msgs = extractItems(body, ["messages"]);
+  const lastGuest = msgs.filter((m) => m.guest_id && m.message).sort((x, y) => String(y.created).localeCompare(String(x.created)))[0];
+  const res = resolved.res ?? (thread.reservation_id ? (await liveReservation(env, Number(thread.reservation_id)).catch(() => null))?.res ?? null : null);
+
+  const warnings: string[] = [];
+  if (a.kind === "reply") {
+    if (res?.status && /cancel|denied|declin|expired/i.test(res.status)) warnings.push(`The reservation is ${res.status}.`);
+    if (/\b(code|pin|password|wifi|key\s?safe|lockbox)\b/i.test(a.message)) warnings.push("The message looks like it may contain access details — double-check before sending.");
+  }
+
+  const summary = {
+    kind: a.kind,
+    goes_to: a.kind === "reply" ? `guest via ${a.send_by ?? "channel"} (${thread.integration_type_name ?? "unknown channel"})` : "internal note — team only, never sent to the guest",
+    thread_id: resolved.threadId,
+    reservation: res ? {
+      id: res.id, confirmation_code: res.confirmation_code, guest_first_name: res.guest_name?.split(" ")[0] ?? null,
+      check_in: res.check_in, check_out: res.check_out, status: res.status, source: res.source,
+      property: res.listing_nickname ?? await nicknameFor(env, res.listing_id),
+    } : null,
+    last_guest_message: lastGuest ? { created: lastGuest.created, text: (redactAccess(redactContacts(String(lastGuest.message))) ?? "").slice(0, 300) } : null,
+    message: a.message,
+  };
+  const req: Attempt = a.kind === "reply"
+    ? { method: "POST", path: "/inbox/reply", body: { thread_id: resolved.threadId, message: a.message, ...(a.send_by && a.send_by !== "channel" ? { send_by: a.send_by } : {}) } }
+    : { method: "POST", path: "/inbox/note", body: { thread_id: resolved.threadId, note: a.message } };
+  const action = a.kind === "reply" ? "send_guest_message" : "add_thread_note";
+  const pending = await preparePending(env.DB, action, req.method, req.path, { attempts: [req] } as unknown as Row, summary, user);
+  return {
+    status: "preview",
+    message: a.kind === "reply"
+      ? "Nothing has been sent yet. Show the user exactly who this goes to and the full message. Only after they clearly say yes, call confirm_write."
+      : "Nothing has been saved yet. Only after the user says yes, call confirm_write.",
+    confirm_token: pending.token, expires_at: pending.expires_at,
+    summary, warnings,
   };
 }
