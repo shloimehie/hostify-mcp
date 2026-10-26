@@ -1,6 +1,6 @@
 # Hostify MCP
 
-Private, read-only Hostify connection for Claude and ChatGPT, deployed on Cloudflare Workers and protected with GitHub OAuth.
+Private Hostify connection for Claude and ChatGPT, deployed on Cloudflare Workers and protected with GitHub OAuth. It is read-only by default; write actions (creating reservations) can be switched on and always go through a preview → confirm step.
 
 ## How it stays fast
 
@@ -28,6 +28,23 @@ Live from Hostify: `get_calendar`, `get_reservation`, `get_listing`, `get_listin
 
 Revenue figures count confirmed bookings only, clip nights to the requested range and pro-rate money by nights. Channel copies of a listing (those with a `parent_listing_id`) roll up into the parent property.
 
+## Write actions (v3.1.0)
+
+Off unless the Worker has `WRITES_ENABLED` set to `true` (add it in Cloudflare as a secret so deploys don't reset it). Code lives in `src/writes.ts`.
+
+Every write is two steps:
+
+1. **Preview** – e.g. `create_reservation` validates the input, resolves the property (must be exactly one match), checks the live calendar and cached bookings for clashes, and stores the exact Hostify request in `h_pending_writes`. Nothing is sent to Hostify.
+2. **Confirm** – `confirm_write` with the preview's `confirm_token` sends exactly the stored request, once. Tokens expire after 15 minutes and can't be reused.
+
+| Tool | What |
+| --- | --- |
+| `create_reservation` | Step 1: preview a new direct / corporate booking |
+| `confirm_write` | Step 2: send a previewed change to Hostify |
+| `write_log` | Recent changes sent through the connector (who, when, what, result) |
+
+Guest emails and phones are hidden in previews and never returned in results. Every confirmed write stays in `h_pending_writes` as an audit log. Hostify field names for `POST /reservations` are set in one place, `buildReservationBody` in `src/writes.ts`.
+
 ## Secrets
 
 Never commit these values. Add them in Cloudflare as encrypted secrets:
@@ -36,6 +53,7 @@ Never commit these values. Add them in Cloudflare as encrypted secrets:
 - `GITHUB_CLIENT_ID`
 - `GITHUB_CLIENT_SECRET`
 - `COOKIE_ENCRYPTION_KEY`
+- `WRITES_ENABLED` (optional; `true` turns on write actions)
 
 ## Deploy
 
