@@ -69,6 +69,9 @@ body.home header.mast.solid{background:var(--navy);box-shadow:0 6px 24px rgba(8,
 .band-cta{grid-column:1/-1;background:var(--navy);color:var(--on-navy);padding:clamp(36px,5vw,60px) 24px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px}
 .band-cta h3{font-size:clamp(28px,3.4vw,42px);max-width:22em}.band-cta p{margin:0 0 8px;color:var(--gold);font-size:16px}
 .brand{color:var(--on-navy);display:flex;align-items:center;gap:14px;flex-direction:row}.brand .logo-i{display:block;height:46px;width:auto;flex:0 0 auto}.brand-t{display:flex;flex-direction:column;gap:1px}@media (max-width:700px){.brand .logo-i{height:38px}}.f-logo{color:var(--on-navy);display:block;width:170px}.f-logo svg{display:block;width:100%;height:auto}
+@media (max-width:900px){header.mast .wrap{flex-wrap:nowrap}nav.top a:not(.btn){display:none}nav.top .btn{min-height:42px;padding:0 18px}.brand-t>span{display:none}.brand b{font-size:21px;letter-spacing:.16em}}
+@media (max-width:420px){.brand b{font-size:17px;letter-spacing:.12em}.brand .logo-i{height:34px}nav.top .btn{padding:0 14px;font-size:11px;letter-spacing:.14em}}
+.chips{scrollbar-width:none}@media (max-width:700px){.chips{flex-wrap:nowrap;overflow-x:auto;margin-right:-16px;padding-right:16px}.chips button{flex:0 0 auto}}
 .search{background:var(--paper);color:var(--ink);display:flex;flex-wrap:wrap;margin:-40px clamp(0px,3vw,40px) 0;position:relative;z-index:3;box-shadow:0 24px 60px rgba(8,14,28,.28)}
 .search label{flex:1 1 170px;padding:15px 20px;display:flex;flex-direction:column;gap:4px;font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
 .search select,.search input{border:0;background:transparent;font-size:15px;letter-spacing:0;text-transform:none;padding:4px 0;color:var(--ink);min-width:0}
