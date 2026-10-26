@@ -1,6 +1,7 @@
 import OAuthProvider from "@cloudflare/workers-oauth-provider";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { McpAgent } from "agents/mcp";
+import { WorkerEntrypoint } from "cloudflare:workers";
 import { z } from "zod";
 import { GitHubHandler } from "./github-handler";
 import {
@@ -446,6 +447,32 @@ export class HostifyMCPV2 extends McpAgent<Env, Record<string, never>, Props> {
         try { return result({ writes: await recentWrites(this.env.DB, limit) }); } catch (e) { return failure(e); }
       },
     );
+  }
+}
+
+// Private entry point for the hometohost.com website worker (service binding "HOSTIFY",
+// entrypoint "SiteData"). Returns a listing's public photos, description and amenities, so the
+// website needs no Hostify key of its own. Not reachable from the internet.
+export class SiteData extends WorkerEntrypoint<Env> {
+  async listingContent(listingId: number): Promise<Row> {
+    if (!Number.isInteger(listingId) || listingId <= 0) throw new Error("bad listing id");
+    const apiKey = this.env.HOSTIFY_API_KEY;
+    const body = await hostifyGet(apiKey, `/listings/${listingId}`, { include_related_objects: 1 }) as Row;
+    const listing = (body.listing && typeof body.listing === "object" ? body.listing : body) as Row;
+    const sources: Row[] = [listing, body];
+    if (!extractPhotos(sources).length) {
+      for (const [path, params] of [[`/listings/${listingId}/photos`, {}], ["/photos", { listing_id: listingId }]] as [string, Row][]) {
+        try {
+          const items = extractItems(await hostifyGet(apiKey, path, params), ["photos", "images"]);
+          if (items.length) { sources.push({ photos: items }); break; }
+        } catch { /* endpoint not available on this account */ }
+      }
+    }
+    const photos = extractPhotos(sources);
+    return {
+      listing: mapListing(listing), photo_count: photos.length, photos: photos.slice(0, 20),
+      description: extractDescription(sources), amenities: extractAmenities(sources), source: "live",
+    };
   }
 }
 
