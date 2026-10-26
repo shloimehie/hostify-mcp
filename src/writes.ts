@@ -339,9 +339,13 @@ export async function previewCreateReservation(env: WriteEnv, r: NewReservation,
 const DIRECT_SOURCE = /^direct\b/i;
 const ALREADY_CANCELLED = /cancel/i;
 
+// Hostify's accepted statuses: accepted, cancelled_by_host, cancelled_by_guest, denied, no_show.
+export type CancelledBy = "host" | "guest";
+
 export async function previewCancelReservation(
-  env: WriteEnv, reservationId: number, reason: string | undefined, user: string,
+  env: WriteEnv, reservationId: number, reason: string | undefined, user: string, cancelledBy: CancelledBy = "host",
 ): Promise<Row> {
+  const newStatus = cancelledBy === "guest" ? "cancelled_by_guest" : "cancelled_by_host";
   // Always check against live Hostify data, never the cache.
   const body = await hostifyGet(env.HOSTIFY_API_KEY, `/reservations/${reservationId}`, { fees: 1 }) as Row;
   const item = (body.reservation && typeof body.reservation === "object" ? body.reservation : body) as Row;
@@ -373,8 +377,8 @@ export async function previewCancelReservation(
 
   const plan: SendPlan = {
     attempts: [
-      { method: "PUT", path: `/reservations/${res.id}`, body: { status: "cancelled" } }, // no note: it would overwrite the booking's existing note
-      { method: "POST", path: `/reservations/${res.id}/cancel`, body: reason ? { reason } : {} },
+      { method: "PUT", path: `/reservations/${res.id}`, body: { status: newStatus } }, // no note: it would overwrite the booking's existing note
+      { method: "POST", path: `/reservations/${res.id}/cancel`, body: { status: newStatus, ...(reason ? { reason } : {}) } },
     ],
     verify: { path: `/reservations/${res.id}`, expect_status: "cancel" },
   };
@@ -383,7 +387,7 @@ export async function previewCancelReservation(
     property: { id: res.listing_id, nickname },
     check_in: res.check_in, check_out: res.check_out, nights: res.nights,
     source: res.source, current_status: res.status, total_price: res.total_price, currency: res.currency,
-    new_status: "cancelled", reason: reason ?? null,
+    new_status: newStatus, reason: reason ?? null,
   };
   const pending = await preparePending(
     env.DB, "cancel_reservation", plan.attempts[0].method, plan.attempts[0].path, plan as unknown as Row, summary, user,
@@ -395,5 +399,6 @@ export async function previewCancelReservation(
     expires_at: pending.expires_at,
     summary,
     warnings,
+    request: { method: plan.attempts[0].method, path: plan.attempts[0].path, body: plan.attempts[0].body },
   };
 }

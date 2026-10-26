@@ -64,7 +64,7 @@ const INSTRUCTIONS = [
 ].join(" ");
 
 export class HostifyMCPV2 extends McpAgent<Env, Record<string, never>, Props> {
-  server = new McpServer({ name: "Home to Host – Hostify", version: "3.2.0" }, { instructions: INSTRUCTIONS });
+  server = new McpServer({ name: "Home to Host – Hostify", version: "3.2.1" }, { instructions: INSTRUCTIONS });
 
   async init() {
     const db = () => this.env.DB;
@@ -352,10 +352,12 @@ export class HostifyMCPV2 extends McpAgent<Env, Record<string, never>, Props> {
       {
         reservation_id: z.number().int().positive(),
         reason: z.string().max(500).optional().describe("Why it is being cancelled (kept in the write log)"),
+        cancelled_by: z.enum(["host", "guest"]).default("host")
+          .describe("Who is cancelling: host → cancelled_by_host (default), guest → cancelled_by_guest"),
       },
-      async ({ reservation_id, reason }) => {
+      async ({ reservation_id, reason, cancelled_by }) => {
         if (!writesEnabled(this.env)) return writesOff();
-        try { return result(await previewCancelReservation(this.env, reservation_id, reason, who())); } catch (e) { return failure(e); }
+        try { return result(await previewCancelReservation(this.env, reservation_id, reason, who(), cancelled_by)); } catch (e) { return failure(e); }
       },
     );
 
