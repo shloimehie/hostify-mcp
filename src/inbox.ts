@@ -150,15 +150,16 @@ export function upsertThread(db: D1Database, row: Record<string, unknown>, now: 
   return db.prepare(sql).bind(...values, now);
 }
 
-// Only live listings' conversations are read: listed in Hostify, or (for
-// channel copies and room units, which aren't in h_listings) a booking that
-// ended in the last 90 days or is still to come. Names starting "X " are
-// retired listings and are skipped.
+// Only live UK listings' conversations are read (UK = priced in GBP; US
+// listings are USD): listed in Hostify, or (for channel copies and room
+// units, which aren't in h_listings) a booking that ended in the last 90 days
+// or is still to come. Names starting "X " are retired listings and are skipped.
 export const LIVE_LISTINGS_SQL = `
-  SELECT id FROM h_listings WHERE is_listed = 1 AND lower(COALESCE(nickname,'')) NOT LIKE 'x %'
+  SELECT id FROM h_listings
+  WHERE is_listed = 1 AND currency = 'GBP' AND lower(COALESCE(nickname,'')) NOT LIKE 'x %'
   UNION
   SELECT listing_id FROM h_reservations
-  WHERE is_booking = 1 AND check_out >= date('now','-90 days') AND lower(COALESCE(listing_nickname,'')) NOT LIKE 'x %'`;
+  WHERE is_booking = 1 AND currency = 'GBP' AND check_out >= date('now','-90 days') AND lower(COALESCE(listing_nickname,'')) NOT LIKE 'x %'`;
 
 // Read up to `limit` threads whose messages are missing or out of date.
 // Newest conversations first, so recent history is usable early.
@@ -244,7 +245,7 @@ export async function messagesStatus(db: D1Database): Promise<Row> {
   const msgs = await db.prepare("SELECT COUNT(*) AS n FROM h_messages").first<{ n: number }>();
   const err = await db.prepare("SELECT fetch_error FROM h_threads WHERE fetch_error IS NOT NULL ORDER BY id DESC LIMIT 1").first<{ fetch_error: string }>();
   return {
-    dataset: "Guest messages (live listings' past conversations)",
+    dataset: "Guest messages (live UK listings, last 12 months)",
     job: "inbox_messages",
     live_listing_threads_found: row?.threads ?? 0,
     threads_read: row?.threads_read ?? 0,

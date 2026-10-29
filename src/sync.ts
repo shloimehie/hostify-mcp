@@ -401,14 +401,14 @@ export async function runInboxMessages(env: SyncEnv): Promise<Row> {
   const lock = (await env.DB.prepare(
     `INSERT INTO h_sync_jobs (job, restart_after) VALUES ('_lock_inbox', ?) ON CONFLICT(job) DO UPDATE SET restart_after = excluded.restart_after
      WHERE h_sync_jobs.restart_after IS NULL OR h_sync_jobs.restart_after < ?`,
-  ).bind(addMinutes(now, 3), now.toISOString()).run()) as { meta?: { changes?: number } };
+  ).bind(addMinutes(now, 2), now.toISOString()).run()) as { meta?: { changes?: number } };
   if (lock?.meta && lock.meta.changes === 0) return { skipped: "previous inbox run still in progress" };
   try {
     const day = now.toISOString().slice(0, 10);
     const used = Number((await env.DB.prepare("SELECT rows_written FROM h_daily_writes WHERE day=?").bind(day).first<{ rows_written: number }>())?.rows_written ?? 0);
     const soft = Number(env.SYNC_DAILY_WRITE_SOFT_CAP) || 50000;
     if (used >= soft) return { skipped: "daily write cap reached" };
-    const perRun = Math.max(5, Math.min(150, Number(env.INBOX_THREADS_PER_RUN) || 100));
+    const perRun = Math.max(5, Math.min(150, Number(env.INBOX_THREADS_PER_RUN) || 50));
     const days = Math.max(30, Math.min(3650, Number(env.INBOX_HISTORY_DAYS) || 365));
     const m = await syncThreadMessages(env, perRun, now, days);
     if (m.writes > 0) {

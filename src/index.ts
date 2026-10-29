@@ -526,13 +526,16 @@ const oauth = new OAuthProvider({
 export default {
   fetch: (request: Request, env: Env, ctx: ExecutionContext) => oauth.fetch(request, env, ctx),
   // Cron trigger (see wrangler.jsonc): keeps the cache current with no manual refresh.
-  // "* * * * *" = bookings, listings, reviews, inbox thread list.
-  // "*/2 * * * *" = guest messages, on their own so they don't wait behind the rest.
-  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+  // Every minute, two independent jobs with their own locks: the booking /
+  // listing / review / inbox-thread sync, and reading guest messages (so the
+  // messages never wait behind the rest).
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil((async () => {
       await ensureSchema(env.DB);
-      if (controller.cron === "*/2 * * * *") await runInboxMessages(env);
-      else await runSync(env);
+      await Promise.all([
+        runSync(env).catch(() => undefined),
+        runInboxMessages(env).catch(() => undefined),
+      ]);
     })());
   },
 };
