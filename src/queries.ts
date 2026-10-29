@@ -112,9 +112,19 @@ async function scopeFor(db: Db, matched: MatchedListing[]): Promise<Scope> {
 }
 
 // Property name -> every listing id of that physical unit (channel copies included).
+// Also adds channel copies and room units (e.g. "Swinton 32 - 13 - Bcom"),
+// which are not in h_listings but appear on bookings.
 export async function scopeForQuery(db: Db, query: string): Promise<Scope> {
   await ensureSchema(db);
-  return scopeFor(db, await findListings(db, query, 40));
+  const scope = await scopeFor(db, await findListings(db, query, 40));
+  const words = tokens(query);
+  if (!words.length) return scope;
+  const more = await db.prepare(
+    `SELECT DISTINCT listing_id AS id FROM h_reservations
+     WHERE listing_id IS NOT NULL AND ${words.map(() => "lower(COALESCE(listing_nickname,'')) LIKE ?").join(" AND ")} LIMIT 60`,
+  ).bind(...words.map((w) => `%${w}%`)).all<{ id: number }>();
+  const ids = [...new Set([...scope.listingIds, ...more.results.map((r) => r.id)])].slice(0, MAX_IDS);
+  return { ...scope, listingIds: ids };
 }
 
 // ---------- booking statistics ----------
