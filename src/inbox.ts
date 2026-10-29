@@ -162,16 +162,18 @@ export const LIVE_LISTINGS_SQL = `
 
 // Read up to `limit` threads whose messages are missing or out of date.
 // Newest conversations first, so recent history is usable early.
-export async function syncThreadMessages(env: InboxEnv, limit: number, now: Date): Promise<{ threads: number; messages: number; writes: number; errors: number }> {
+export async function syncThreadMessages(env: InboxEnv, limit: number, now: Date, historyDays = 365): Promise<{ threads: number; messages: number; writes: number; errors: number; stopped?: string }> {
   const nowIso = now.toISOString();
+  const since = new Date(now.getTime() - historyDays * 86400000).toISOString().slice(0, 10);
   const pending = await env.DB.prepare(
     `SELECT id, reservation_id, listing_id, last_message_at FROM h_threads
      WHERE messages_synced_for IS NOT COALESCE(last_message_at, '-')
        AND listing_id IN (${LIVE_LISTINGS_SQL})
+       AND (last_message_at IS NULL OR last_message_at >= ?)
      ORDER BY last_message_at DESC, id DESC LIMIT ?`,
-  ).bind(limit).all<{ id: number; reservation_id: number | null; listing_id: number | null; last_message_at: string | null }>();
+  ).bind(since, limit).all<{ id: number; reservation_id: number | null; listing_id: number | null; last_message_at: string | null }>();
 
-  const out = { threads: 0, messages: 0, writes: 0, errors: 0 };
+  const out: { threads: number; messages: number; writes: number; errors: number; stopped?: string } = { threads: 0, messages: 0, writes: 0, errors: 0 };
   let shapeRecorded = false;
   type Pending = { id: number; reservation_id: number | null; listing_id: number | null; last_message_at: string | null };
 
@@ -206,6 +208,9 @@ export async function syncThreadMessages(env: InboxEnv, limit: number, now: Date
       out.messages += rows.length;
       return statements;
     } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      // Hostify busy or down: leave the thread for the next run.
+      if (/error (429|5\d\d)|fetch failed|network/i.test(msg)) { out.stopped = msg.slice(0, 120); return []; }
       // Don't retry a broken thread every minute: mark it read for this
       // version; it is retried when the thread changes again.
       out.errors += 1;
@@ -215,8 +220,8 @@ export async function syncThreadMessages(env: InboxEnv, limit: number, now: Date
   };
 
   // A few threads at a time: much faster than one by one, gentle on Hostify.
-  const PARALLEL = 5;
-  for (let i = 0; i < pending.results.length; i += PARALLEL) {
+  const PARALLEL = 6;
+  for (let i = 0; i < pending.results.length && !out.stopped; i += PARALLEL) {
     const group = pending.results.slice(i, i + PARALLEL);
     const statements = (await Promise.all(group.map(readOne))).flat();
     for (let j = 0; j < statements.length; j += 50) {
