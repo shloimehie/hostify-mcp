@@ -130,6 +130,36 @@ SCHEMA.push(
   )`,
 );
 
+// Guest inbox history (src/inbox.ts). One row per conversation thread, and
+// its messages with contact details and access details cut out.
+SCHEMA.push(
+  `CREATE TABLE IF NOT EXISTS h_threads (
+    id INTEGER PRIMARY KEY,
+    reservation_id INTEGER,
+    listing_id INTEGER,
+    channel TEXT,
+    guest_name TEXT,
+    last_message_at TEXT,
+    messages_synced_for TEXT,
+    message_count INTEGER,
+    fetch_error TEXT,
+    synced_at TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS h_thr_reservation ON h_threads(reservation_id)`,
+  `CREATE TABLE IF NOT EXISTS h_messages (
+    id INTEGER PRIMARY KEY,
+    thread_id INTEGER NOT NULL,
+    reservation_id INTEGER,
+    listing_id INTEGER,
+    created TEXT,
+    sender TEXT,
+    kind TEXT,
+    text TEXT,
+    synced_at TEXT NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS h_msg_listing_created ON h_messages(listing_id, created)`,
+);
+
 let applied = false;
 
 export async function ensureSchema(db: D1Database): Promise<void> {

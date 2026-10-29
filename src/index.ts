@@ -9,9 +9,10 @@ import {
   mapListing, mapListingDetail, mapReservation, mapSearchItem, Row,
 } from "./hostify";
 import {
-  findListings, findReservations, movements, portfolioPerformance, propertyPerformance, reviews,
+  findListings, findReservations, scopeForQuery, movements, portfolioPerformance, propertyPerformance, reviews,
 } from "./queries";
 import { ensureSchema } from "./schema";
+import { inboxDiagnostics, messagesForListings } from "./inbox";
 import { freshness, runSync, syncStatus } from "./sync";
 import {
   executePending, previewCancelReservation, previewCreateReservation, previewGuestMessage, previewUpdateReservation,
@@ -60,7 +61,7 @@ function scrub(value: unknown): unknown {
 const INSTRUCTIONS = [
   "Home to Host property data from Hostify.",
   "Answer from the cached tools first — they are instant and pre-computed: find_property, property_performance, portfolio_performance,",
-  "arrivals_departures, find_reservation, property_reviews. The cache refreshes itself every few minutes; each answer carries a data_freshness stamp.",
+  "arrivals_departures, find_reservation, property_reviews, guest_message_history. The cache refreshes itself every few minutes; each answer carries a data_freshness stamp.",
   "Use one call per question: property_performance already includes totals, occupancy, ADR and the booking list.",
   "Use live tools only for what the cache cannot answer: get_calendar (open nights and today's prices), get_reservation (fee breakdown of one booking),",
   "or when data_freshness says the cache is stale. Properties can be named by nickname, street or postcode (e.g. 'Holmbury 7', 'Durlston 52', 'E5 8RR').",
@@ -68,7 +69,7 @@ const INSTRUCTIONS = [
 ].join(" ");
 
 export class HostifyMCPV2 extends McpAgent<Env, Record<string, never>, Props> {
-  server = new McpServer({ name: "Home to Host – Hostify", version: "3.3.0" }, { instructions: INSTRUCTIONS });
+  server = new McpServer({ name: "Home to Host – Hostify", version: "3.4.0" }, { instructions: INSTRUCTIONS });
 
   async init() {
     const db = () => this.env.DB;
@@ -173,6 +174,38 @@ export class HostifyMCPV2 extends McpAgent<Env, Record<string, never>, Props> {
           const data = await reviews(db(), property, from_date, to_date, max_rating, limit);
           return result({ ...data, data_freshness: await freshness(db(), ["reviews"]) });
         } catch (e) { return failure(e); }
+      },
+    );
+
+    this.server.tool(
+      "guest_message_history",
+      "Instant. Past guest conversations for one property (all its channel listings), newest first: what guests asked and what the team answered. " +
+      "Use it to build per-property guest FAQs or to see how an issue was handled before. Filter by sender ('guest' = guest questions only) or a search word " +
+      "(e.g. 'heating', 'parking', 'wifi'). Contact details and access codes are already removed.",
+      {
+        property: z.string().min(1).describe("Nickname, street or postcode"),
+        from_date: date.optional(),
+        to_date: date.optional(),
+        sender: z.enum(["guest", "team"]).optional(),
+        search: z.string().min(2).max(60).optional(),
+        limit: z.number().int().min(1).max(300).default(100),
+      },
+      async ({ property, from_date, to_date, sender, search, limit }) => {
+        try {
+          const scope = await scopeForQuery(db(), property);
+          if (!scope.listingIds.length) return result({ note: `No property matched "${property}".` });
+          const messages = await messagesForListings(db(), scope.listingIds, { from: from_date, to: to_date, sender, search, limit });
+          return result({ property: scope.units, count: messages.length, messages, data_freshness: await freshness(db(), ["inbox_threads", "inbox_recent"]) });
+        } catch (e) { return failure(e); }
+      },
+    );
+
+    this.server.tool(
+      "inbox_diagnostics",
+      "Technical check of the Hostify inbox connection: field names Hostify returns for threads and messages (no message content). Optional reservation_id shows its thread ids.",
+      { reservation_id: z.number().int().positive().optional() },
+      async ({ reservation_id }) => {
+        try { return result(await inboxDiagnostics(this.env, reservation_id)); } catch (e) { return failure(e); }
       },
     );
 

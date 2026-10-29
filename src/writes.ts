@@ -14,6 +14,7 @@
 import { extractItems, hostifyGet, HOSTIFY_BASE_URL, mapReservation, Row } from "./hostify";
 import { findListings } from "./queries";
 import { ensureSchema } from "./schema";
+import { cachedThreadFor } from "./inbox";
 
 const TOKEN_TTL_MINUTES = 15;
 
@@ -557,26 +558,55 @@ export async function previewUpdateReservation(env: WriteEnv, e: ReservationEdit
 
 // ---------- guest messaging ----------
 
-async function resolveThread(env: WriteEnv, reservationId?: number, threadId?: number): Promise<{ threadId: number; res: ReturnType<typeof mapReservation> | null }> {
-  if (threadId) return { threadId, res: null };
+// A booking's thread: from the inbox cache first (h_threads, filled by the
+// background sync), then the booking's own inbox id, then a scan of the
+// newest threads. Each candidate is tried in turn by the caller, because
+// Hostify's booking "inbox_id" is not always a thread id.
+async function threadCandidates(env: WriteEnv, reservationId?: number, threadId?: number): Promise<{ ids: number[]; res: ReturnType<typeof mapReservation> | null }> {
+  if (threadId) return { ids: [threadId], res: null };
   if (!reservationId) throw new Error("Give a reservation_id (or a thread_id).");
+  const ids: number[] = [];
+  const cached = await cachedThreadFor(env.DB, reservationId).catch(() => null);
+  if (cached) ids.push(cached);
   const { raw, res } = await liveReservation(env, reservationId);
-  const direct = Number(raw.inbox_id);
-  if (Number.isFinite(direct) && direct > 0) return { threadId: direct, res };
-  // Fall back to scanning the most recent inbox threads.
+  for (const key of ["thread_id", "inbox_thread_id", "inbox_id"]) {
+    const v = Number(raw[key]);
+    if (Number.isFinite(v) && v > 0 && !ids.includes(v)) ids.push(v);
+  }
+  return { ids, res };
+}
+
+async function scanForThread(env: WriteEnv, reservationId: number): Promise<number | null> {
   for (let page = 1; page <= 5; page++) {
     const body = await hostifyGet(env.HOSTIFY_API_KEY, "/inbox", { page, per_page: 100 }) as Row;
     const threads = extractItems(body, ["threads"]);
-    const hit = threads.find((t) => Number(t.reservation_id) === reservationId);
-    if (hit) return { threadId: Number(hit.id), res };
+    const hit = threads.find((t) => Number(t.reservation_id ?? (t.reservation as Row | undefined)?.id) === reservationId);
+    if (hit) return Number(hit.id);
     if (threads.length < 100) break;
   }
-  throw new Error(`No inbox thread found for reservation ${reservationId}.`);
+  return null;
+}
+
+async function resolveThread(env: WriteEnv, reservationId?: number, threadId?: number): Promise<{ threadId: number; res: ReturnType<typeof mapReservation> | null; body: Row }> {
+  const { ids, res } = await threadCandidates(env, reservationId, threadId);
+  let lastError: unknown = null;
+  for (const id of ids) {
+    try { return { threadId: id, res, body: await hostifyGet(env.HOSTIFY_API_KEY, `/inbox/${id}`) as Row }; }
+    catch (e) { lastError = e; }
+  }
+  if (reservationId && !threadId) {
+    const scanned = await scanForThread(env, reservationId);
+    if (scanned && !ids.includes(scanned)) {
+      return { threadId: scanned, res, body: await hostifyGet(env.HOSTIFY_API_KEY, `/inbox/${scanned}`) as Row };
+    }
+  }
+  if (lastError) throw lastError;
+  throw new Error(`No inbox thread found for reservation ${reservationId}. If it is older, the inbox history sync may not have reached it yet (see cache_status).`);
 }
 
 export async function readGuestThread(env: WriteEnv, reservationId: number | undefined, threadId: number | undefined, limit: number): Promise<Row> {
   const resolved = await resolveThread(env, reservationId, threadId);
-  const body = await hostifyGet(env.HOSTIFY_API_KEY, `/inbox/${resolved.threadId}`) as Row;
+  const body = resolved.body;
   const thread = (body.thread && typeof body.thread === "object" ? body.thread : {}) as Row;
   const messages = extractItems(body, ["messages"])
     .map((m) => ({
@@ -606,7 +636,7 @@ export async function previewGuestMessage(
   user: string,
 ): Promise<Row> {
   const resolved = await resolveThread(env, a.reservation_id, a.thread_id);
-  const body = await hostifyGet(env.HOSTIFY_API_KEY, `/inbox/${resolved.threadId}`) as Row;
+  const body = resolved.body;
   const thread = (body.thread && typeof body.thread === "object" ? body.thread : {}) as Row;
   const msgs = extractItems(body, ["messages"]);
   const lastGuest = msgs.filter((m) => m.guest_id && m.message).sort((x, y) => String(y.created).localeCompare(String(x.created)))[0];

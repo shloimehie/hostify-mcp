@@ -8,6 +8,7 @@ import {
   hostifyPage, mapListing, mapReservation, mapReview, mapTransaction, Row,
 } from "./hostify";
 import { ensureSchema } from "./schema";
+import { mapThread, messagesStatus, syncThreadMessages } from "./inbox";
 
 export interface SyncEnv {
   HOSTIFY_API_KEY: string;
@@ -29,6 +30,7 @@ interface JobDef {
   table: string;
   map: Mapper;
   restMinutes: number; // pause between completed passes
+  maxPages?: number; // stop a pass early (for "newest first" feeds)
   window?: (today: Date) => { from: string; to: string };
   params: (from: string | null, to: string | null) => Row;
 }
@@ -95,6 +97,32 @@ export const JOBS: JobDef[] = [
     restMinutes: 720,
     window: (t) => ({ from: shift(t, -HISTORY_DAYS), to: shift(t, 180) }),
     params: (from, to) => ({ start_date: from, end_date: to, sort: "checkIn", fees: 1 }),
+  },
+  {
+    // Guest inbox: every conversation thread ever (daily full sweep). The
+    // messages inside each thread are read by syncThreadMessages.
+    name: "inbox_threads",
+    label: "Guest conversations (all, for message history)",
+    path: "/inbox",
+    keys: ["threads"],
+    perPage: 100,
+    table: "h_threads",
+    map: mapThread as Mapper,
+    restMinutes: 1440,
+    params: () => ({}),
+  },
+  {
+    // Newest conversations, so new guest messages arrive within minutes.
+    name: "inbox_recent",
+    label: "Guest conversations (latest activity)",
+    path: "/inbox",
+    keys: ["threads"],
+    perPage: 100,
+    table: "h_threads",
+    map: mapThread as Mapper,
+    restMinutes: 5,
+    maxPages: 2,
+    params: () => ({}),
   },
   // Transactions are paused: Hostify's /transactions endpoint has no date
   // filter, so loading them means all ~90,000 rows.
@@ -185,7 +213,7 @@ async function runOnePage(env: SyncEnv, def: JobDef, prior: JobState | undefined
     state.total_expected = page.total;
     state.last_page_at = nowIso;
     state.last_error = null;
-    if (page.hasMore && page.items.length > 0) {
+    if (page.hasMore && page.items.length > 0 && !(def.maxPages && state.next_page >= def.maxPages)) {
       state.next_page += 1;
       state.restart_after = null;
     } else {
@@ -216,7 +244,7 @@ export interface SyncReport {
 // Each run spends a fixed page budget. Priority jobs (properties and
 // upcoming stays) get the first 60% so they stay fresh; the large history,
 // reviews and transactions backfills share whatever is left.
-const PRIORITY_JOBS = new Set(["listings", "reservations_hot"]);
+const PRIORITY_JOBS = new Set(["listings", "reservations_hot", "inbox_recent"]);
 
 export async function runSync(env: SyncEnv, pageBudget?: number): Promise<SyncReport> {
   await ensureSchema(env.DB);
@@ -277,6 +305,20 @@ async function syncLocked(env: SyncEnv, pageBudget: number | undefined, now: Dat
   if (used >= hard) { report.skipped = "daily write cap reached"; return report; }
 
   await spend(JOBS.filter((d) => PRIORITY_JOBS.has(d.name)), Math.ceil(budget * 0.6));
+  // Guest messages: up to a third of the budget reads threads that are new or
+  // changed (the first runs backfill all past conversations).
+  if (used + writes.count < soft) {
+    const left = Math.max(2, Math.min(Math.ceil(budget / 3), budget - report.pages));
+    const m = await syncThreadMessages(env, left, now).catch((e) => {
+      report.jobs.inbox_messages = { pages: 0, rows_this_pass: 0, total_expected: null, complete: false, error: String(e).slice(0, 200) };
+      return null;
+    });
+    if (m) {
+      writes.count += m.writes;
+      report.pages += m.threads;
+      report.jobs.inbox_messages = { pages: m.threads, rows_this_pass: m.messages, total_expected: null, complete: m.threads === 0, error: m.errors ? `${m.errors} thread(s) could not be read` : null };
+    }
+  }
   if (used + writes.count < soft) {
     await spend([...JOBS.filter((d) => !PRIORITY_JOBS.has(d.name)), ...JOBS.filter((d) => PRIORITY_JOBS.has(d.name))], budget);
   }
@@ -326,7 +368,8 @@ export async function syncStatus(db: D1Database): Promise<Row[]> {
   const rows = await db.prepare("SELECT * FROM h_sync_jobs").all<JobState>();
   const states = new Map(rows.results.map((s) => [s.job, s]));
   const now = Date.now();
-  return JOBS.map((def) => {
+  const inbox = await messagesStatus(db).catch((e) => ({ job: "inbox_messages", last_error: String(e) }));
+  return [...JOBS.map((def) => {
     const s = states.get(def.name);
     const inProgress = !!s && s.next_page > 1;
     return {
@@ -338,7 +381,7 @@ export async function syncStatus(db: D1Database): Promise<Row[]> {
       window: s?.window_from ? `${s.window_from} to ${s.window_to}` : null,
       last_error: s?.last_error ?? null,
     };
-  });
+  }), inbox];
 }
 
 // Compact freshness stamp attached to every cached answer.

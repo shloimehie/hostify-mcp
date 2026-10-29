@@ -13,16 +13,21 @@ A cron trigger (`*/2 * * * *` in `wrangler.jsonc`) syncs Hostify into the D1 dat
 | `reviews` | Last 2 years | every 3 h |
 | `reservations_full` | 2 years back to 18 months ahead | every 12 h |
 | `transactions` | All | every 12 h |
+| `inbox_threads` | Every guest conversation thread (full history) | daily |
+| `inbox_recent` | Threads with the latest activity | every ~5 min |
+| `inbox_messages` | Messages inside new or changed threads (first runs backfill all history) | up to a third of each run |
 
 The first full fill takes roughly an hour or two; after that the cache stays current on its own. Tables are created automatically (`src/schema.ts`).
 
 Only allowlisted fields are stored or returned (`src/hostify.ts`). Custom fields (lockbox codes, WiFi passwords, phone numbers), guest emails and phones are never cached or shown.
 
+Guest messages (`src/inbox.ts`) are stored with guest emails, phone numbers and access details (door codes, PINs, WiFi passwords) cut out. Automatic template messages are skipped.
+
 ## Tools
 
-Cached, instant: `find_property`, `property_performance`, `portfolio_performance`, `arrivals_departures`, `find_reservation`, `property_reviews`, `cache_status`, `sync_now`.
+Cached, instant: `find_property`, `property_performance`, `portfolio_performance`, `arrivals_departures`, `find_reservation`, `property_reviews`, `guest_message_history`, `cache_status`, `sync_now`.
 
-Live from Hostify: `get_calendar`, `get_reservation`, `get_listing`, `get_listing_content`, `list_reservations_live`, `search_hostify`.
+Live from Hostify: `get_calendar`, `get_reservation`, `get_listing`, `get_listing_content`, `list_reservations_live`, `search_hostify`, `inbox_diagnostics`.
 
 `get_listing_content` returns only public, guest-facing content for the website: photo URLs with captions, the public description sections (summary, description, space, neighbourhood, transit) and amenity names. Access, check-in and house-manual text is never read. If photos or a description can't be found, it returns the response's key names (never values) under `diagnostics` so the right field can be added.
 
