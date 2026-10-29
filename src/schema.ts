@@ -158,6 +158,7 @@ SCHEMA.push(
     synced_at TEXT NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS h_msg_listing_created ON h_messages(listing_id, created)`,
+  `CREATE TABLE IF NOT EXISTS h_inbox_shape (what TEXT PRIMARY KEY, shape TEXT, seen_at TEXT)`,
 );
 
 let applied = false;
