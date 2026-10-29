@@ -111,6 +111,12 @@ async function scopeFor(db: Db, matched: MatchedListing[]): Promise<Scope> {
   };
 }
 
+// Property name -> every listing id of that physical unit (channel copies included).
+export async function scopeForQuery(db: Db, query: string): Promise<Scope> {
+  await ensureSchema(db);
+  return scopeFor(db, await findListings(db, query, 40));
+}
+
 // ---------- booking statistics ----------
 
 interface UnitStats {
