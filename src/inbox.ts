@@ -150,17 +150,31 @@ export function upsertThread(db: D1Database, row: Record<string, unknown>, now: 
   return db.prepare(sql).bind(...values, now);
 }
 
+// Only live UK listings' conversations are read (UK = priced in GBP; US
+// listings are USD): listed in Hostify, or (for channel copies and room
+// units, which aren't in h_listings) a booking that ended in the last 90 days
+// or is still to come. Names starting "X " are retired listings and are skipped.
+export const LIVE_LISTINGS_SQL = `
+  SELECT id FROM h_listings
+  WHERE is_listed = 1 AND currency = 'GBP' AND lower(COALESCE(nickname,'')) NOT LIKE 'x %'
+  UNION
+  SELECT listing_id FROM h_reservations
+  WHERE is_booking = 1 AND currency = 'GBP' AND check_out >= date('now','-90 days') AND lower(COALESCE(listing_nickname,'')) NOT LIKE 'x %'`;
+
 // Read up to `limit` threads whose messages are missing or out of date.
 // Newest conversations first, so recent history is usable early.
-export async function syncThreadMessages(env: InboxEnv, limit: number, now: Date): Promise<{ threads: number; messages: number; writes: number; errors: number }> {
+export async function syncThreadMessages(env: InboxEnv, limit: number, now: Date, historyDays = 365): Promise<{ threads: number; messages: number; writes: number; errors: number; stopped?: string }> {
   const nowIso = now.toISOString();
+  const since = new Date(now.getTime() - historyDays * 86400000).toISOString().slice(0, 10);
   const pending = await env.DB.prepare(
     `SELECT id, reservation_id, listing_id, last_message_at FROM h_threads
      WHERE messages_synced_for IS NOT COALESCE(last_message_at, '-')
+       AND listing_id IN (${LIVE_LISTINGS_SQL})
+       AND (last_message_at IS NULL OR last_message_at >= ?)
      ORDER BY last_message_at DESC, id DESC LIMIT ?`,
-  ).bind(limit).all<{ id: number; reservation_id: number | null; listing_id: number | null; last_message_at: string | null }>();
+  ).bind(since, limit).all<{ id: number; reservation_id: number | null; listing_id: number | null; last_message_at: string | null }>();
 
-  const out = { threads: 0, messages: 0, writes: 0, errors: 0 };
+  const out: { threads: number; messages: number; writes: number; errors: number; stopped?: string } = { threads: 0, messages: 0, writes: 0, errors: 0 };
   let shapeRecorded = false;
   type Pending = { id: number; reservation_id: number | null; listing_id: number | null; last_message_at: string | null };
 
@@ -195,6 +209,9 @@ export async function syncThreadMessages(env: InboxEnv, limit: number, now: Date
       out.messages += rows.length;
       return statements;
     } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      // Hostify busy or down: leave the thread for the next run.
+      if (/error (429|5\d\d)|fetch failed|network/i.test(msg)) { out.stopped = msg.slice(0, 120); return []; }
       // Don't retry a broken thread every minute: mark it read for this
       // version; it is retried when the thread changes again.
       out.errors += 1;
@@ -204,8 +221,8 @@ export async function syncThreadMessages(env: InboxEnv, limit: number, now: Date
   };
 
   // A few threads at a time: much faster than one by one, gentle on Hostify.
-  const PARALLEL = 5;
-  for (let i = 0; i < pending.results.length; i += PARALLEL) {
+  const PARALLEL = 6;
+  for (let i = 0; i < pending.results.length && !out.stopped; i += PARALLEL) {
     const group = pending.results.slice(i, i + PARALLEL);
     const statements = (await Promise.all(group.map(readOne))).flat();
     for (let j = 0; j < statements.length; j += 50) {
@@ -223,14 +240,14 @@ export async function messagesStatus(db: D1Database): Promise<Row> {
             SUM(CASE WHEN messages_synced_for IS COALESCE(last_message_at,'-') THEN 1 ELSE 0 END) AS threads_read,
             SUM(CASE WHEN fetch_error IS NOT NULL THEN 1 ELSE 0 END) AS threads_with_errors,
             MIN(last_message_at) AS oldest_thread
-     FROM h_threads`,
+     FROM h_threads WHERE listing_id IN (${LIVE_LISTINGS_SQL})`,
   ).first<Row>();
   const msgs = await db.prepare("SELECT COUNT(*) AS n FROM h_messages").first<{ n: number }>();
   const err = await db.prepare("SELECT fetch_error FROM h_threads WHERE fetch_error IS NOT NULL ORDER BY id DESC LIMIT 1").first<{ fetch_error: string }>();
   return {
-    dataset: "Guest messages (all past conversations)",
+    dataset: "Guest messages (live UK listings, last 12 months)",
     job: "inbox_messages",
-    threads_found: row?.threads ?? 0,
+    live_listing_threads_found: row?.threads ?? 0,
     threads_read: row?.threads_read ?? 0,
     threads_with_errors: row?.threads_with_errors ?? 0,
     messages_stored: msgs?.n ?? 0,

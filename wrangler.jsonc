@@ -22,6 +22,6 @@
     }
   ],
   "triggers": { "crons": ["* * * * *"] },
-  "vars": { "SYNC_PAGES_PER_RUN": "30", "SYNC_HISTORY_DAYS": "365", "SYNC_DAILY_WRITE_SOFT_CAP": "1000000", "SYNC_DAILY_WRITE_HARD_CAP": "1500000" },
+  "vars": { "SYNC_PAGES_PER_RUN": "30", "SYNC_HISTORY_DAYS": "365", "SYNC_DAILY_WRITE_SOFT_CAP": "1000000", "SYNC_DAILY_WRITE_HARD_CAP": "1500000", "INBOX_THREADS_PER_RUN": "50", "INBOX_HISTORY_DAYS": "365" },
   "observability": { "enabled": true }
 }

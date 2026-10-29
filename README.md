@@ -15,7 +15,7 @@ A cron trigger (`*/2 * * * *` in `wrangler.jsonc`) syncs Hostify into the D1 dat
 | `transactions` | All | every 12 h |
 | `inbox_threads` | Every guest conversation thread (full history) | daily |
 | `inbox_recent` | Threads with the latest activity | every ~5 min |
-| `inbox_messages` | Messages inside new or changed threads (first runs backfill all history) | up to a third of each run |
+| `inbox_messages` | Messages in new or changed threads of live UK listings, last 12 months (runs beside the main sync every minute, ~50 threads a run) | continuously |
 
 The first full fill takes roughly an hour or two; after that the cache stays current on its own. Tables are created automatically (`src/schema.ts`).
 

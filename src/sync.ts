@@ -17,6 +17,8 @@ export interface SyncEnv {
   SYNC_DAILY_WRITE_SOFT_CAP?: string;
   SYNC_DAILY_WRITE_HARD_CAP?: string;
   SYNC_HISTORY_DAYS?: string;
+  INBOX_THREADS_PER_RUN?: string;
+  INBOX_HISTORY_DAYS?: string;
 }
 
 type Mapper = (item: Row) => Record<string, unknown> | null;
@@ -309,21 +311,6 @@ async function syncLocked(env: SyncEnv, pageBudget: number | undefined, now: Dat
   if (used >= hard) { report.skipped = "daily write cap reached"; return report; }
 
   await spend(JOBS.filter((d) => PRIORITY_JOBS.has(d.name)), Math.ceil(budget * 0.6));
-  // Guest messages: up to a third of the budget reads threads that are new or
-  // changed (the first runs backfill all past conversations).
-  if (used + writes.count < soft) {
-    // Threads are read 5 at a time, so a third of the page budget buys ~5x as many threads.
-    const left = Math.max(5, Math.min(Math.ceil(budget / 3), budget - report.pages) * 5);
-    const m = await syncThreadMessages(env, left, now).catch((e) => {
-      report.jobs.inbox_messages = { pages: 0, rows_this_pass: 0, total_expected: null, complete: false, error: String(e).slice(0, 200) };
-      return null;
-    });
-    if (m) {
-      writes.count += m.writes;
-      report.pages += Math.ceil(m.threads / 5);
-      report.jobs.inbox_messages = { pages: m.threads, rows_this_pass: m.messages, total_expected: null, complete: m.threads === 0, error: m.errors ? `${m.errors} thread(s) could not be read` : null };
-    }
-  }
   if (used + writes.count < soft) {
     await spend([...JOBS.filter((d) => !PRIORITY_JOBS.has(d.name)), ...JOBS.filter((d) => PRIORITY_JOBS.has(d.name))], budget);
   }
@@ -404,4 +391,33 @@ export async function freshness(db: D1Database, jobs: string[]): Promise<Record<
       : `updated ${age < 60 ? `${age} min` : `${Math.round(age / 60)} h`} ago${s.next_page > 1 ? " (refresh in progress)" : ""}${s.last_error ? " (last attempt errored)" : ""}`;
   }
   return out;
+}
+
+// Guest messages: own cron and own lock, so reading conversations never waits
+// behind the booking sync. Stops early if Hostify pushes back.
+export async function runInboxMessages(env: SyncEnv): Promise<Row> {
+  await ensureSchema(env.DB);
+  const now = new Date();
+  const lock = (await env.DB.prepare(
+    `INSERT INTO h_sync_jobs (job, restart_after) VALUES ('_lock_inbox', ?) ON CONFLICT(job) DO UPDATE SET restart_after = excluded.restart_after
+     WHERE h_sync_jobs.restart_after IS NULL OR h_sync_jobs.restart_after < ?`,
+  ).bind(addMinutes(now, 2), now.toISOString()).run()) as { meta?: { changes?: number } };
+  if (lock?.meta && lock.meta.changes === 0) return { skipped: "previous inbox run still in progress" };
+  try {
+    const day = now.toISOString().slice(0, 10);
+    const used = Number((await env.DB.prepare("SELECT rows_written FROM h_daily_writes WHERE day=?").bind(day).first<{ rows_written: number }>())?.rows_written ?? 0);
+    const soft = Number(env.SYNC_DAILY_WRITE_SOFT_CAP) || 50000;
+    if (used >= soft) return { skipped: "daily write cap reached" };
+    const perRun = Math.max(5, Math.min(150, Number(env.INBOX_THREADS_PER_RUN) || 50));
+    const days = Math.max(30, Math.min(3650, Number(env.INBOX_HISTORY_DAYS) || 365));
+    const m = await syncThreadMessages(env, perRun, now, days);
+    if (m.writes > 0) {
+      await env.DB.prepare(
+        "INSERT INTO h_daily_writes (day, rows_written) VALUES (?, ?) ON CONFLICT(day) DO UPDATE SET rows_written = rows_written + excluded.rows_written",
+      ).bind(day, m.writes).run();
+    }
+    return m as unknown as Row;
+  } finally {
+    await env.DB.prepare("UPDATE h_sync_jobs SET restart_after = NULL WHERE job = '_lock_inbox'").run();
+  }
 }

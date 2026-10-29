@@ -13,7 +13,7 @@ import {
 } from "./queries";
 import { ensureSchema } from "./schema";
 import { inboxDiagnostics, messagesForListings } from "./inbox";
-import { freshness, runSync, syncStatus } from "./sync";
+import { freshness, runInboxMessages, runSync, syncStatus } from "./sync";
 import {
   executePending, previewCancelReservation, previewCreateReservation, previewGuestMessage, previewUpdateReservation,
   readGuestThread, recentWrites, writesEnabled,
@@ -29,6 +29,8 @@ interface Env {
   DB: D1Database;
   SYNC_PAGES_PER_RUN?: string;
   WRITES_ENABLED?: string;
+  INBOX_THREADS_PER_RUN?: string;
+  INBOX_HISTORY_DAYS?: string;
 }
 
 type Props = { login: string; name: string; email: string; accessToken: string };
@@ -524,10 +526,16 @@ const oauth = new OAuthProvider({
 export default {
   fetch: (request: Request, env: Env, ctx: ExecutionContext) => oauth.fetch(request, env, ctx),
   // Cron trigger (see wrangler.jsonc): keeps the cache current with no manual refresh.
+  // Every minute, two independent jobs with their own locks: the booking /
+  // listing / review / inbox-thread sync, and reading guest messages (so the
+  // messages never wait behind the rest).
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil((async () => {
       await ensureSchema(env.DB);
-      await runSync(env);
+      await Promise.all([
+        runSync(env).catch(() => undefined),
+        runInboxMessages(env).catch(() => undefined),
+      ]);
     })());
   },
 };
