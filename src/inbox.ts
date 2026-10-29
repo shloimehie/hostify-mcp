@@ -39,6 +39,18 @@ function nested(row: Row, key: string): Row {
   return v && typeof v === "object" && !Array.isArray(v) ? (v as Row) : {};
 }
 
+const DATE_LIKE = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/;
+
+// When the thread last changed. Hostify's list sends it as "last_message".
+function lastMessageAt(item: Row, lastMsg: Row): string | null {
+  for (const key of ["last_message_at", "last_message", "last_message_date", "last_message_time", "updated_at", "updated", "modified"]) {
+    const v = item[key];
+    if (typeof v === "string" && DATE_LIKE.test(v)) return v;
+  }
+  const nestedDate = pick(lastMsg, "created", "created_at");
+  return typeof nestedDate === "string" && DATE_LIKE.test(nestedDate) ? nestedDate : null;
+}
+
 // One thread row from GET /inbox.
 export function mapThread(item: Row): Record<string, unknown> | null {
   const id = num(pick(item, "id", "thread_id", "inbox_id"));
@@ -51,10 +63,7 @@ export function mapThread(item: Row): Record<string, unknown> | null {
     listing_id: num(pick(item, "listing_id") ?? pick(res, "listing_id")),
     channel: str(pick(item, "integration_type_name", "channel", "source", "integration_type")),
     guest_name: str(pick(item, "guest_name", "name") ?? pick(nested(item, "guest"), "name")),
-    last_message_at: str(
-      pick(item, "last_message_at", "last_message_date", "last_message_time", "updated_at", "updated", "modified")
-      ?? pick(lastMsg, "created", "created_at"),
-    ),
+    last_message_at: lastMessageAt(item, lastMsg),
   };
 }
 
@@ -152,24 +161,30 @@ export async function syncThreadMessages(env: InboxEnv, limit: number, now: Date
   ).bind(limit).all<{ id: number; reservation_id: number | null; listing_id: number | null; last_message_at: string | null }>();
 
   const out = { threads: 0, messages: 0, writes: 0, errors: 0 };
-  for (const t of pending.results) {
+  let shapeRecorded = false;
+  type Pending = { id: number; reservation_id: number | null; listing_id: number | null; last_message_at: string | null };
+
+  // Read one thread from Hostify and return the statements that store it.
+  const readOne = async (t: Pending): Promise<D1PreparedStatement[]> => {
     const stamp = t.last_message_at ?? "-";
-    let statements: D1PreparedStatement[] = [];
     try {
       const { header, messages } = await fetchThread(env, t.id);
-      if (out.threads === 0) {
-        await recordShape(env.DB, "thread_header", header);
-        const fromTeam = messages.find((m) => m.message && Number(m.is_automatic) !== 1 && senderOf(m) === "team");
+      if (!shapeRecorded) {
         const anyMsg = messages.find((m) => m.message && Number(m.is_automatic) !== 1);
-        if (anyMsg) await recordShape(env.DB, "message", anyMsg);
-        if (fromTeam && fromTeam !== anyMsg) await recordShape(env.DB, "message_team", fromTeam);
+        if (anyMsg) {
+          shapeRecorded = true;
+          await recordShape(env.DB, "thread_header", header);
+          await recordShape(env.DB, "message", anyMsg);
+          const other = messages.find((m) => m.message && Number(m.is_automatic) !== 1 && senderOf(m) !== senderOf(anyMsg));
+          if (other) await recordShape(env.DB, "message_other_sender", other);
+        }
       }
       const reservationId = t.reservation_id ?? num(header.reservation_id);
       const listingId = t.listing_id ?? num(header.listing_id);
       const rows = messages
         .map((m) => mapMessage(m, { id: t.id, reservation_id: reservationId, listing_id: listingId }))
         .filter((r): r is Record<string, unknown> => r !== null);
-      statements = rows.map((r) => {
+      const statements = rows.map((r) => {
         const { sql, values } = upsertSql("h_messages", r);
         return env.DB.prepare(sql).bind(...values, nowIso);
       });
@@ -178,19 +193,26 @@ export async function syncThreadMessages(env: InboxEnv, limit: number, now: Date
            reservation_id=COALESCE(reservation_id, ?), listing_id=COALESCE(listing_id, ?) WHERE id=?`,
       ).bind(stamp, rows.length, reservationId, listingId, t.id));
       out.messages += rows.length;
+      return statements;
     } catch (error) {
       // Don't retry a broken thread every minute: mark it read for this
       // version; it is retried when the thread changes again.
       out.errors += 1;
-      statements = [env.DB.prepare(`UPDATE h_threads SET messages_synced_for=?, fetch_error=? WHERE id=?`)
+      return [env.DB.prepare(`UPDATE h_threads SET messages_synced_for=?, fetch_error=? WHERE id=?`)
         .bind(stamp, (error instanceof Error ? error.message : String(error)).slice(0, 200), t.id)];
     }
-    // D1 batches are capped; messages per thread are usually few, but chunk anyway.
-    for (let i = 0; i < statements.length; i += 50) {
-      const results = (await env.DB.batch(statements.slice(i, i + 50))) as { meta?: { rows_written?: number } }[];
+  };
+
+  // A few threads at a time: much faster than one by one, gentle on Hostify.
+  const PARALLEL = 5;
+  for (let i = 0; i < pending.results.length; i += PARALLEL) {
+    const group = pending.results.slice(i, i + PARALLEL);
+    const statements = (await Promise.all(group.map(readOne))).flat();
+    for (let j = 0; j < statements.length; j += 50) {
+      const results = (await env.DB.batch(statements.slice(j, j + 50))) as { meta?: { rows_written?: number } }[];
       out.writes += (results ?? []).reduce((sum, r) => sum + Number(r?.meta?.rows_written ?? 0), 0);
     }
-    out.threads += 1;
+    out.threads += group.length;
   }
   return out;
 }

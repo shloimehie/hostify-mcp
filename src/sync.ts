@@ -312,14 +312,15 @@ async function syncLocked(env: SyncEnv, pageBudget: number | undefined, now: Dat
   // Guest messages: up to a third of the budget reads threads that are new or
   // changed (the first runs backfill all past conversations).
   if (used + writes.count < soft) {
-    const left = Math.max(2, Math.min(Math.ceil(budget / 3), budget - report.pages));
+    // Threads are read 5 at a time, so a third of the page budget buys ~5x as many threads.
+    const left = Math.max(5, Math.min(Math.ceil(budget / 3), budget - report.pages) * 5);
     const m = await syncThreadMessages(env, left, now).catch((e) => {
       report.jobs.inbox_messages = { pages: 0, rows_this_pass: 0, total_expected: null, complete: false, error: String(e).slice(0, 200) };
       return null;
     });
     if (m) {
       writes.count += m.writes;
-      report.pages += m.threads;
+      report.pages += Math.ceil(m.threads / 5);
       report.jobs.inbox_messages = { pages: m.threads, rows_this_pass: m.messages, total_expected: null, complete: m.threads === 0, error: m.errors ? `${m.errors} thread(s) could not be read` : null };
     }
   }
