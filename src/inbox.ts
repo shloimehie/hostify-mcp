@@ -65,19 +65,37 @@ function cleanText(value: unknown): string | null {
 }
 
 // One message from GET /inbox/{id}.
+// Who wrote a message. Hostify sets guest_id on every message of a thread,
+// so it can't tell guest from team on its own; prefer an explicit field.
+export function senderOf(m: Row): "guest" | "team" {
+  for (const key of ["is_incoming", "incoming", "from_guest", "is_guest"]) {
+    if (m[key] !== undefined && m[key] !== null && m[key] !== "") return Number(m[key]) === 1 || m[key] === true ? "guest" : "team";
+  }
+  for (const key of ["sender_type", "from", "direction", "type", "sender", "author_type"]) {
+    const v = typeof m[key] === "string" ? (m[key] as string).toLowerCase() : "";
+    if (/guest|incoming|^in$|inbound|received/.test(v)) return "guest";
+    if (/host|team|user|outgoing|^out$|outbound|sent|staff|admin/.test(v)) return "team";
+  }
+  if (m.user_id || m.sender_user_id || m.host_id) return "team";
+  return m.guest_id ? "guest" : "team";
+}
+
+// Status lines like "Request accepted|Reservation2|accepted".
+const SYSTEM_LINE = /^[^|\n]{1,60}\|[^|\n]{1,60}\|[^|\n]{1,60}$/;
+
 function mapMessage(m: Row, thread: { id: number; reservation_id: number | null; listing_id: number | null }): Record<string, unknown> | null {
   const id = num(m.id);
   if (!id) return null;
   if (Number(m.is_automatic) === 1) return null;
   const text = cleanText(m.message) ?? cleanText(m.notes);
-  if (!text) return null;
+  if (!text || SYSTEM_LINE.test(text.trim())) return null;
   return {
     id,
     thread_id: thread.id,
     reservation_id: thread.reservation_id,
     listing_id: thread.listing_id,
     created: str(pick(m, "created", "created_at", "date")),
-    sender: m.guest_id ? "guest" : "team",
+    sender: senderOf(m),
     kind: cleanText(m.message) ? "message" : "internal_note",
     text,
   };
@@ -98,6 +116,24 @@ function upsertSql(table: string, row: Record<string, unknown>): { sql: string; 
     sql: `INSERT INTO ${table} (${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")}) ON CONFLICT(id) DO UPDATE SET ${updates} WHERE NOT (${same})`,
     values: Object.values(row).map((v) => (v === undefined ? null : v)),
   };
+}
+
+// Field names (and short non-text values) Hostify sends, so the mapping can be
+// checked from the database without reading any message content.
+const SAFE_VALUE = /^(id|guest_id|user_id|host_id|is_\w+|incoming|type|sender_type|from|direction|sender|author_type|status|channel\w*|integration\w*|created\w*|updated\w*|last_\w*_at|\w*date\w*|\w*time\w*|answered|read|unread)$/i;
+export function shapeOf(row: unknown): string {
+  if (!row || typeof row !== "object") return JSON.stringify(typeof row);
+  const out: Row = {};
+  for (const [k, v] of Object.entries(row as Row)) {
+    if (v === null || typeof v === "object") { out[k] = v === null ? null : Array.isArray(v) ? "[array]" : "{object}"; continue; }
+    out[k] = SAFE_VALUE.test(k) && String(v).length <= 30 ? v : typeof v;
+  }
+  return JSON.stringify(out).slice(0, 4000);
+}
+
+async function recordShape(db: D1Database, what: string, row: unknown): Promise<void> {
+  await db.prepare("INSERT OR REPLACE INTO h_inbox_shape (what, shape, seen_at) VALUES (?,?,?)")
+    .bind(what, shapeOf(row), new Date().toISOString()).run().catch(() => undefined);
 }
 
 export function upsertThread(db: D1Database, row: Record<string, unknown>, now: string): D1PreparedStatement {
@@ -121,6 +157,13 @@ export async function syncThreadMessages(env: InboxEnv, limit: number, now: Date
     let statements: D1PreparedStatement[] = [];
     try {
       const { header, messages } = await fetchThread(env, t.id);
+      if (out.threads === 0) {
+        await recordShape(env.DB, "thread_header", header);
+        const fromTeam = messages.find((m) => m.message && Number(m.is_automatic) !== 1 && senderOf(m) === "team");
+        const anyMsg = messages.find((m) => m.message && Number(m.is_automatic) !== 1);
+        if (anyMsg) await recordShape(env.DB, "message", anyMsg);
+        if (fromTeam && fromTeam !== anyMsg) await recordShape(env.DB, "message_team", fromTeam);
+      }
       const reservationId = t.reservation_id ?? num(header.reservation_id);
       const listingId = t.listing_id ?? num(header.listing_id);
       const rows = messages

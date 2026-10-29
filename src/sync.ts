@@ -8,7 +8,7 @@ import {
   hostifyPage, mapListing, mapReservation, mapReview, mapTransaction, Row,
 } from "./hostify";
 import { ensureSchema } from "./schema";
-import { mapThread, messagesStatus, syncThreadMessages } from "./inbox";
+import { mapThread, messagesStatus, shapeOf, syncThreadMessages } from "./inbox";
 
 export interface SyncEnv {
   HOSTIFY_API_KEY: string;
@@ -208,6 +208,10 @@ async function runOnePage(env: SyncEnv, def: JobDef, prior: JobState | undefined
       env.HOSTIFY_API_KEY, def.path, def.params(state.window_from, state.window_to), def.keys, state.next_page, def.perPage,
     );
     const rows = page.items.map(def.map).filter((r): r is Record<string, unknown> => r !== null);
+    if (def.table === "h_threads" && page.items[0]) {
+      await env.DB.prepare("INSERT OR REPLACE INTO h_inbox_shape (what, shape, seen_at) VALUES ('thread_list_item',?,?)")
+        .bind(shapeOf(page.items[0]), nowIso).run().catch(() => undefined);
+    }
     const statements = rows.map((r) => upsert(env.DB, def.table, r, nowIso));
     state.rows_this_pass += rows.length;
     state.total_expected = page.total;
